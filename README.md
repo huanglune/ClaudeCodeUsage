@@ -1,5 +1,7 @@
 # Claude Code Usage
 
+> **Community-maintained fork of [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage).** Original author credit preserved in [LICENSE](LICENSE).
+
 🌐 **多語言文檔 | Multi-language Documentation | 多语言文档 | 多言語ドキュメント | 다국어 문서**
 
 - [English](README-en.md)
@@ -62,11 +64,11 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 
 ### VSCode Marketplace
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/growthjack.claude-code-usage?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage)
+[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/huanglune.claude-code-usage-community?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=huanglune.claude-code-usage-community) | [Open VSX](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
 
 ### Open VSX Registry (for Cursor / Windsurf / Antigravity)
 
-[![Open VSX](https://img.shields.io/open-vsx/v/GrowthJack/claude-code-usage?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage)
+[![Open VSX](https://img.shields.io/open-vsx/v/huanglune/claude-code-usage-community?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
 
 ## Installation
 

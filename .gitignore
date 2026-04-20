@@ -3,3 +3,6 @@ node_modules
 .vscode-test/
 *.vsix
 .DS_Store
+
+# 本地規劃/設計文件（spec + plan 草稿，不入 repo）
+docs/

@@ -3,6 +3,7 @@ import { ClaudeDataLoader } from './dataLoader';
 import { StatusBarManager } from './statusBar';
 import { UsageWebviewProvider } from './webview';
 import { I18n } from './i18n';
+import { initPricing } from './pricing';
 import { ExtensionConfig, UsageData, SessionData } from './types';
 
 export class ClaudeCodeUsageExtension {
@@ -181,9 +182,14 @@ export class ClaudeCodeUsageExtension {
   }
 }
 
-export function activate(context: vscode.ExtensionContext) {
+export async function activate(context: vscode.ExtensionContext) {
   console.log('Claude Code Usage extension is now active');
-  
+
+  // Load bundled pricing snapshot and kick off the background refresh before
+  // we start computing costs. initPricing resolves immediately after loading
+  // any cached overlay; the network fetch runs detached.
+  await initPricing(context);
+
   const extension = new ClaudeCodeUsageExtension(context);
   context.subscriptions.push({
     dispose: () => extension.dispose()

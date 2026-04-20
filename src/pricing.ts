@@ -1,6 +1,23 @@
-// Claude Price calculation by model
+// Runtime pricing module.
+//
+// Source of truth at build time: src/pricing-data.json (regenerated weekly by
+// scripts/update-pricing.ts via GitHub Actions and committed to main).
+//
+// Runtime flow:
+//   1. Module load synchronously reads the bundled snapshot (fast, never fails
+//      at activation).
+//   2. initPricing(context) overlays any previously-cached runtime fetch from
+//      globalStorage.
+//   3. Unless claudeCodeUsage.pricingOfflineMode is true, a detached
+//      background fetch updates globalStorage for the next launch.
+//
+// vscode is imported dynamically inside initPricing so that unit tests (which
+// only exercise getModelPricing / calculateCostFromPricing) can load this
+// module in plain Node without the vscode host being present.
 
-import { ModelPricing } from './types';
+import * as path from 'node:path';
+import * as fs from 'node:fs/promises';
+import type { ModelPricing, PricingSnapshot } from './types';
 
 export interface TokenUsage {
   input_tokens: number;
@@ -9,158 +26,178 @@ export interface TokenUsage {
   cache_read_input_tokens?: number;
 }
 
-const MILL = 1_000_000;
+const TIERED_THRESHOLD = 200_000;
+const LITELLM_URL =
+  'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
+const RUNTIME_FETCH_TIMEOUT_MS = 30_000;
 
-// Official Price Info (State 2025-11-28)
-// https://platform.claude.com/docs/en/about-claude/models/overview
-// https://platform.claude.com/docs/en/about-claude/pricing
-const MODEL_PRICING: Record<string, ModelPricing> = {
-  // Claude Sonnet 4
-  'claude-sonnet-4-20250514': {
-    input_cost_per_token: 3 / MILL, // $3.00 / 1M tokens
-    output_cost_per_token: 15 / MILL, // $15.00 / 1M tokens
-    cache_creation_input_token_cost: 3.75 / MILL, // $3.75 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 0.3 / MILL, // $0.30 / 1M tokens
-  },
+// Populated at module load from the bundled snapshot. initPricing() may
+// overlay additions/updates from the runtime cache.
+let pricing: Record<string, ModelPricing> = {};
 
-  // Claude Opus 4
-  'claude-opus-4-20250514': {
-    input_cost_per_token: 15 / MILL, // $15.00 / 1M tokens
-    output_cost_per_token: 75 / MILL, // $75.00 / 1M tokens
-    cache_creation_input_token_cost: 18.75 / MILL, // $18.75 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 1.5 / MILL, // $1.50 / 1M tokens
-  },
+try {
+  // eslint-disable-next-line @typescript-eslint/no-var-requires
+  const snapshot = require('./pricing-data.json') as PricingSnapshot;
+  pricing = snapshot.models;
+} catch {
+  // pricing-data.json should always exist in a built extension because
+  // scripts/post-compile.mjs copies it into out/. If it's missing, prices
+  // fall through to 0 rather than crashing activation.
+  console.warn('[pricing] bundled snapshot not found; prices will be 0 until a refresh lands');
+}
 
-  // Claude Opus 4.1 (2025-08-05)
-  'claude-opus-4-1-20250805': {
-    input_cost_per_token: 15 / MILL, // $15.00 / 1M tokens
-    output_cost_per_token: 75 / MILL, // $75.00 / 1M tokens
-    cache_creation_input_token_cost: 18.75 / MILL, // $18.75 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 1.5 / MILL, // $1.50 / 1M tokens
-  },
+// Test-only hatch: swap the internal table. Used by src/pricing.test.ts.
+export function _setPricingForTests(value: Record<string, ModelPricing>): void {
+  pricing = value;
+}
 
-  // Claude Opus 4.1 (alias)
-  'claude-opus-4-1': {
-    input_cost_per_token: 15 / MILL, // $15.00 / 1M tokens
-    output_cost_per_token: 75 / MILL, // $75.00 / 1M tokens
-    cache_creation_input_token_cost: 18.75 / MILL, // $18.75 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 1.5 / MILL, // $1.50 / 1M tokens
-  },
+// Minimal structural type for the slice of ExtensionContext we touch.
+// Keeps this module vscode-import-free at module load.
+interface MinimalContext {
+  globalStorageUri: { fsPath: string };
+}
 
-  // Claude Opus 4.5 (2025-11 v01)
-  'claude-opus-4-5-20251101': {
-    input_cost_per_token: 5 / MILL, // $5.00 / 1M tokens
-    output_cost_per_token: 25 / MILL, // $25.00 / 1M tokens
-    cache_creation_input_token_cost: 6 / MILL, // $6 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 0.5 / MILL, // $0.50 / 1M tokens
-  },
+export async function initPricing(context: MinimalContext): Promise<void> {
+  const cacheFile = path.join(context.globalStorageUri.fsPath, 'pricing-cache.json');
+  const cached = await tryLoadCache(cacheFile);
+  if (cached != null && cached.models != null) {
+    pricing = { ...pricing, ...cached.models };
+  }
 
-  // Claude Opus 4.5 (alias)
-  'claude-opus-4-5': {
-    input_cost_per_token: 5 / MILL, // $5.00 / 1M tokens
-    output_cost_per_token: 25 / MILL, // $25.00 / 1M tokens
-    cache_creation_input_token_cost: 6 / MILL, // $6 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 0.5 / MILL, // $0.50 / 1M tokens
-  },
+  const vscode = await import('vscode');
+  const offline = vscode.workspace
+    .getConfiguration('claudeCodeUsage')
+    .get<boolean>('pricingOfflineMode', false);
 
-  // Claude Sonnet 3.5 (2024-10-22)
-  'claude-3-5-sonnet-20241022': {
-    input_cost_per_token: 3 / MILL, // $3.00 / 1M tokens
-    output_cost_per_token: 15 / MILL, // $15.00 / 1M tokens
-    cache_creation_input_token_cost: 3.75 / MILL, // $3.75 / 1M tokens (5min caching)
-    cache_read_input_token_cost: 0.3 / MILL, // $0.30 / 1M tokens
-  },
+  if (!offline) {
+    void refreshFromNetwork(cacheFile);
+  }
+}
 
-  // Claude Haiku 3.5 (Not used anymore)
-  'claude-3-5-haiku-20241022': {
-    input_cost_per_token: 0.8 / MILL, // $0.8 / 1M tokens
-    output_cost_per_token: 4 / MILL, // $4.00 / 1M tokens
-    cache_creation_input_token_cost: 1.6 / MILL, // $1.6 / 1M tokens
-    cache_read_input_token_cost: 0.08 / MILL, // $0.08 / 1M tokens
-  },
-
-  // Claude Haiku 4.5 (2025-10 v01)
-  'claude-haiku-4-5-20251001': {
-    input_cost_per_token: 1 / MILL, // $1.00 / 1M tokens
-    output_cost_per_token: 5 / MILL, // $5.00 / 1M tokens
-    cache_creation_input_token_cost: 1.25 / MILL, // $1.25 / 1M tokens
-    cache_read_input_token_cost: 0.1 / MILL, // $0.10 / 1M tokens
-  },
-};
-
-/**
- * Get pricing information for a model
- * @param modelName Model name
- * @returns Pricing information, or null if not found
- */
-export function getModelPricing(modelName: string | undefined): ModelPricing | null {
-  if (!modelName) {
+async function tryLoadCache(file: string): Promise<PricingSnapshot | null> {
+  try {
+    const raw = await fs.readFile(file, 'utf-8');
+    return JSON.parse(raw) as PricingSnapshot;
+  } catch {
     return null;
   }
+}
 
-  // Direct match
-  if (MODEL_PRICING[modelName]) {
-    return MODEL_PRICING[modelName];
+async function refreshFromNetwork(cacheFile: string): Promise<void> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), RUNTIME_FETCH_TIMEOUT_MS);
+    const res = await fetch(LITELLM_URL, { signal: controller.signal });
+    clearTimeout(timer);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const raw = (await res.json()) as Record<string, unknown>;
+
+    const filtered: Record<string, ModelPricing> = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (!isClaudeKey(key)) continue;
+      if (value == null || typeof value !== 'object') continue;
+      filtered[key] = value as ModelPricing;
+    }
+
+    const snapshot: PricingSnapshot = {
+      _meta: {
+        source: LITELLM_URL,
+        fetched_at: new Date().toISOString(),
+        source_commit: 'runtime-fetch',
+        model_count: Object.keys(filtered).length,
+      },
+      models: filtered,
+    };
+
+    pricing = { ...pricing, ...filtered };
+    await fs.mkdir(path.dirname(cacheFile), { recursive: true });
+    await fs.writeFile(cacheFile, JSON.stringify(snapshot, null, 2), 'utf-8');
+  } catch (err) {
+    console.warn('[pricing] background refresh failed, using snapshot:', (err as Error).message);
+  }
+}
+
+function isClaudeKey(key: string): boolean {
+  return (
+    key.startsWith('claude-') ||
+    key.startsWith('anthropic/claude-') ||
+    key.startsWith('anthropic.claude-')
+  );
+}
+
+export function getModelPricing(modelName: string | undefined): ModelPricing | null {
+  if (!modelName) return null;
+  const normalized = modelName.replace(/^anthropic\//, '');
+
+  if (pricing[normalized]) return pricing[normalized];
+
+  const variations = [
+    normalized,
+    `anthropic/${normalized}`,
+    `anthropic.${normalized}`,
+    normalized.replace(/-\d{8}$/, ''),
+  ];
+  for (const v of variations) {
+    if (pricing[v]) return pricing[v];
   }
 
-  // Try different variation matches (similar to ccusage logic)
-  const variations = [modelName, `anthropic/${modelName}`, `claude-3-5-${modelName}`, `claude-3-${modelName}`, `claude-${modelName}`];
-
-  for (const variation of variations) {
-    if (MODEL_PRICING[variation]) {
-      return MODEL_PRICING[variation];
+  const families = ['opus', 'haiku', 'sonnet'] as const;
+  for (const family of families) {
+    if (normalized.includes(family)) {
+      const candidate = latestOfFamily(family);
+      if (candidate != null) return candidate;
     }
   }
 
-  // If unknown model, use Sonnet 4 pricing as default
-  console.warn(`Unknown model: ${modelName}, using Sonnet 4 pricing as fallback`);
-  return MODEL_PRICING['claude-sonnet-4-20250514'];
+  const lastResort = latestOfFamily('sonnet');
+  if (lastResort == null) return null;
+  console.warn(`[pricing] unknown model '${normalized}', using latest sonnet as fallback`);
+  return lastResort;
 }
 
-/**
- * Calculate cost from given token usage and pricing
- * @param tokens Token usage
- * @param pricing Pricing information
- * @returns Total cost (USD)
- */
-export function calculateCostFromPricing(tokens: TokenUsage, pricing: ModelPricing): number {
-  let cost = 0;
-
-  // Input tokens cost
-  if (pricing.input_cost_per_token != null) {
-    cost += tokens.input_tokens * pricing.input_cost_per_token;
-  }
-
-  // Output tokens cost
-  if (pricing.output_cost_per_token != null) {
-    cost += tokens.output_tokens * pricing.output_cost_per_token;
-  }
-
-  // Cache creation tokens cost
-  if (tokens.cache_creation_input_tokens != null && pricing.cache_creation_input_token_cost != null) {
-    cost += tokens.cache_creation_input_tokens * pricing.cache_creation_input_token_cost;
-  }
-
-  // Cache read tokens cost
-  if (tokens.cache_read_input_tokens != null && pricing.cache_read_input_token_cost != null) {
-    cost += tokens.cache_read_input_tokens * pricing.cache_read_input_token_cost;
-  }
-
-  return cost;
+function latestOfFamily(family: 'opus' | 'haiku' | 'sonnet'): ModelPricing | null {
+  // Lexicographic sort — model names carry monotone version suffixes
+  // (claude-opus-4-7 < claude-opus-4-7-20260416). Dated IDs win over bare
+  // aliases, which matches the Anthropic canonical-ID convention.
+  const keys = Object.keys(pricing).filter((k) => k.includes(family)).sort();
+  const last = keys[keys.length - 1];
+  return last ? pricing[last] : null;
 }
 
-/**
- * Calculate total cost of model usage
- * @param tokens Token usage
- * @param modelName Model name
- * @returns Total cost (USD), returns 0 if pricing not found
- */
+export function calculateCostFromPricing(tokens: TokenUsage, p: ModelPricing): number {
+  return (
+    tieredCost(tokens.input_tokens, p.input_cost_per_token, p.input_cost_per_token_above_200k_tokens) +
+    tieredCost(tokens.output_tokens, p.output_cost_per_token, p.output_cost_per_token_above_200k_tokens) +
+    tieredCost(
+      tokens.cache_creation_input_tokens,
+      p.cache_creation_input_token_cost,
+      p.cache_creation_input_token_cost_above_200k_tokens,
+    ) +
+    tieredCost(
+      tokens.cache_read_input_tokens,
+      p.cache_read_input_token_cost,
+      p.cache_read_input_token_cost_above_200k_tokens,
+    )
+  );
+}
+
+function tieredCost(
+  total: number | undefined,
+  basePrice: number | undefined,
+  tieredPrice: number | undefined,
+): number {
+  if (total == null || total <= 0) return 0;
+  if (total > TIERED_THRESHOLD && tieredPrice != null) {
+    const base = Math.min(total, TIERED_THRESHOLD);
+    const above = total - TIERED_THRESHOLD;
+    let sum = above * tieredPrice;
+    if (basePrice != null) sum += base * basePrice;
+    return sum;
+  }
+  return basePrice != null ? total * basePrice : 0;
+}
+
 export function calculateCostFromTokens(tokens: TokenUsage, modelName: string | undefined): number {
-  const pricing = getModelPricing(modelName);
-
-  if (!pricing) {
-    return 0;
-  }
-
-  return calculateCostFromPricing(tokens, pricing);
+  const p = getModelPricing(modelName);
+  return p ? calculateCostFromPricing(tokens, p) : 0;
 }

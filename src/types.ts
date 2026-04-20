@@ -50,6 +50,24 @@ export interface ModelPricing {
   output_cost_per_token?: number;
   cache_creation_input_token_cost?: number;
   cache_read_input_token_cost?: number;
+  // 1M context-window tiered pricing (Claude 4+ 200k threshold)
+  input_cost_per_token_above_200k_tokens?: number;
+  output_cost_per_token_above_200k_tokens?: number;
+  cache_creation_input_token_cost_above_200k_tokens?: number;
+  cache_read_input_token_cost_above_200k_tokens?: number;
+  // Context limits (from LiteLLM)
+  max_input_tokens?: number;
+  max_output_tokens?: number;
+}
+
+export interface PricingSnapshot {
+  _meta: {
+    source: string;
+    fetched_at: string; // ISO 8601
+    source_commit: string; // short sha of LiteLLM main at fetch time
+    model_count: number;
+  };
+  models: Record<string, ModelPricing>;
 }
 
 export type SupportedLanguage = 'en' | "de-DE" | 'zh-TW' | 'zh-CN' | 'ja' | 'ko';

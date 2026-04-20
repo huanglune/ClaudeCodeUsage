@@ -1,5 +1,7 @@
 # Claude Code Usage
 
+> **Community-maintained fork of [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage).** Original author credit preserved in [LICENSE](LICENSE).
+
 🌐 **Language | 語言 | 言語 | 언어**: [🏠 Main](README.md) | **English** | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md)
 
 ---
@@ -56,11 +58,11 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 
 ### VSCode Marketplace
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/growthjack.claude-code-usage?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=growthjack.claude-code-usage)
+[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/huanglune.claude-code-usage-community?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=huanglune.claude-code-usage-community) | [Open VSX](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
 
 ### Open VSX Registry (for Cursor / Windsurf / Antigravity)
 
-[![Open VSX](https://img.shields.io/open-vsx/v/GrowthJack/claude-code-usage?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://marketplace.cursorapi.com/items/?itemName=GrowthJack.claude-code-usage)
+[![Open VSX](https://img.shields.io/open-vsx/v/huanglune/claude-code-usage-community?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
 
 ## Installation
 
@@ -181,3 +183,30 @@ MIT
 ## Contributing
 
 Issues and pull requests are welcome on the GitHub repository.
+
+## Maintainer Setup
+
+### Current release flow
+
+`git push tag v*` triggers `.github/workflows/release.yml`, which:
+
+1. Compiles the extension
+2. Packages a `.vsix` file
+3. Creates a GitHub Release with the `.vsix` attached
+
+Users install by downloading the `.vsix` from Releases and running `code --install-extension <file>.vsix`.
+
+### Enabling Marketplace auto-publish (not active yet)
+
+When the maintainer registers publishing tokens, the release workflow can also push to the two marketplaces. To enable, add these as repo secrets at `Settings → Secrets and variables → Actions → New repository secret`:
+
+| Secret | How to get |
+|---|---|
+| `VSCE_PAT` | https://dev.azure.com/ → User settings → Personal access tokens → New. Scope: *Marketplace (Manage)*. |
+| `OVSX_PAT` | https://open-vsx.org → Profile → Access Tokens → Generate new token. |
+
+Then uncomment / re-add the `vsce publish` and `ovsx publish` steps in `.github/workflows/release.yml`.
+
+### Pricing updates
+
+`src/pricing-data.json` is auto-refreshed from [LiteLLM](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) by `.github/workflows/update-pricing.yml` every Monday 03:00 UTC. The script applies three guardrails (schema, price sanity bounds, 10x jump detector) before committing. Manual trigger: `gh workflow run update-pricing.yml`.

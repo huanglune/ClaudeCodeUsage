@@ -1,19 +1,19 @@
 {
-  "name": "claude-code-usage",
-  "displayName": "Claude Code Usage",
-  "description": "Monitor Claude Code usage and costs in VSCode status bar",
-  "version": "1.0.8",
-  "publisher": "GrowthJack",
-  "author": "GrowthJack",
+  "name": "claude-code-usage-community",
+  "displayName": "Claude Code Usage (Community)",
+  "description": "Monitor Claude Code usage and costs in VSCode status bar (community-maintained fork)",
+  "version": "2.0.0",
+  "publisher": "huanglune",
+  "author": "huangliang",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jack21/ClaudeCodeUsage.git"
+    "url": "https://github.com/huanglune/ClaudeCodeUsage.git"
   },
   "bugs": {
-    "url": "https://github.com/jack21/ClaudeCodeUsage/issues"
+    "url": "https://github.com/huanglune/ClaudeCodeUsage/issues"
   },
-  "homepage": "https://github.com/jack21/ClaudeCodeUsage",
+  "homepage": "https://github.com/huanglune/ClaudeCodeUsage",
   "keywords": [
     "claude",
     "claude-code",
@@ -71,6 +71,11 @@
           "minimum": 0,
           "maximum": 4,
           "description": "Number of decimal places for cost display"
+        },
+        "claudeCodeUsage.pricingOfflineMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, do not fetch the latest Claude model pricing from LiteLLM at startup. Only use the snapshot bundled with the extension."
         }
       }
     },
@@ -94,13 +99,17 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "compile": "tsc -p ./ && node scripts/post-compile.mjs",
+    "watch": "tsc -watch -p ./",
+    "test": "node --import tsx --test scripts/update-pricing.test.ts src/pricing.test.ts",
+    "update-pricing": "tsx scripts/update-pricing.ts"
   },
   "devDependencies": {
     "@types/glob": "^9.0.0",
     "@types/node": "24.0.15",
     "@types/vscode": "^1.74.0",
-    "typescript": "^5.8.3"
+    "tsx": "^4.21.0",
+    "typescript": "^5.8.3",
+    "undici": "^6.25.0"
   }
 }
