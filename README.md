@@ -233,7 +233,7 @@ git push origin vX.Y.Z
 1. 对 `package.json` / `package-lock.json` 执行 `patch` 版本递增
 2. 以 `github-actions[bot]` 身份提交回主分支
 
-默认提交信息形如：`chore(version): bump to vX.Y.Z [skip ci]`。  
+默认提交信息形如：`chore(version): bump to vX.Y.Z [skip version]`。  
 如果某次提交不想触发自动升版本，可在提交信息里加入 `[skip version]`。
 
 ### 启用 Marketplace 自动发布（尚未激活）
