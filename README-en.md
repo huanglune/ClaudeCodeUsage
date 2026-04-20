@@ -183,3 +183,18 @@ MIT
 ## Contributing
 
 Issues and pull requests are welcome on the GitHub repository.
+
+## Maintainer Setup
+
+Releases are fully automated on `git push tag v*`. The release workflow needs two repo secrets:
+
+| Secret | How to get |
+|---|---|
+| `VSCE_PAT` | https://dev.azure.com/ → User settings → Personal access tokens → New. Scope: *Marketplace (Manage)*. |
+| `OVSX_PAT` | https://open-vsx.org → Profile → Access Tokens → Generate new token. |
+
+Configure at: `Settings → Secrets and variables → Actions → New repository secret`.
+
+### Pricing updates
+
+`src/pricing-data.json` is auto-refreshed from [LiteLLM](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) by `.github/workflows/update-pricing.yml` every Monday 03:00 UTC. The script applies three guardrails (schema, price sanity bounds, 10x jump detector) before committing. Manual trigger: `gh workflow run update-pricing.yml`.
