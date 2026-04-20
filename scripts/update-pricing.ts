@@ -11,18 +11,23 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import type { ModelPricing, PricingSnapshot } from '../src/types';
 
-// Honour HTTP(S)_PROXY / http(s)_proxy if set (local dev behind corporate proxy).
-// CI runners have no proxy, so these branches are no-ops there.
-const proxyUrl =
-  process.env.HTTPS_PROXY ??
-  process.env.https_proxy ??
-  process.env.HTTP_PROXY ??
-  process.env.http_proxy;
-if (proxyUrl) {
+// Honour HTTP(S)_PROXY / http(s)_proxy when running this script locally behind
+// a corporate proxy. Node's built-in fetch does not use these env vars by
+// default; undici's ProxyAgent does. We load undici lazily so that CI runners
+// (where no proxy is set) never load the module — avoiding compatibility
+// issues when undici's latest release requires a newer Node than CI uses.
+async function setupProxyIfNeeded(): Promise<void> {
+  const proxyUrl =
+    process.env.HTTPS_PROXY ??
+    process.env.https_proxy ??
+    process.env.HTTP_PROXY ??
+    process.env.http_proxy;
+  if (!proxyUrl) return;
+  const { ProxyAgent, setGlobalDispatcher } = await import('undici');
   setGlobalDispatcher(new ProxyAgent(proxyUrl));
+  console.log(`[pricing] using proxy ${proxyUrl}`);
 }
 
 // ---------- Constants ----------
@@ -199,6 +204,7 @@ function modelsDiffer(a: Record<string, ModelPricing>, b: Record<string, ModelPr
 }
 
 async function main(): Promise<void> {
+  await setupProxyIfNeeded();
   console.log('[pricing] fetching LiteLLM dataset...');
   const [raw, sourceCommit] = await Promise.all([fetchLiteLLMPricing(), fetchLiteLLMHeadSha()]);
 
