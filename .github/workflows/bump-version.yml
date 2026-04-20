@@ -50,6 +50,7 @@ jobs:
           git remote set-url origin https://x-access-token:${{ steps.generate_token.outputs.token }}@github.com/${{ github.repository }}.git
 
           git add package.json package-lock.json
+          # Keep [skip ci] out, otherwise tag-based Release workflow may be skipped.
           git commit -m "chore(version): bump to v${NEW_VERSION} [skip version]"
           git push origin HEAD:main
 
