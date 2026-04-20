@@ -1,6 +1,6 @@
 # Claude Code 사용량 모니터
 
-> **[jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage) 의 커뮤니티 관리 포크입니다.** 원저자 크레딧은 [LICENSE](LICENSE) 에 보존되어 있습니다。
+> **[jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage) 의 커뮤니티 관리 포크입니다.** 원저자 크레딧은 [LICENSE](LICENSE) 에 보존되어 있습니다.
 
 🌐 **Language | 語言 | 言語 | 언어**: [🏠 Main](README.md) | [English](README-en.md) | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | **한국어**
 
