@@ -1,19 +1,19 @@
 {
-  "name": "claude-code-usage",
-  "displayName": "Claude Code Usage",
-  "description": "Monitor Claude Code usage and costs in VSCode status bar",
-  "version": "1.0.8",
-  "publisher": "GrowthJack",
-  "author": "GrowthJack",
+  "name": "claude-code-usage-community",
+  "displayName": "Claude Code Usage (Community)",
+  "description": "Monitor Claude Code usage and costs in VSCode status bar (community-maintained fork)",
+  "version": "2.0.0",
+  "publisher": "huanglune",
+  "author": "huangliang",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/jack21/ClaudeCodeUsage.git"
+    "url": "https://github.com/huanglune/ClaudeCodeUsage.git"
   },
   "bugs": {
-    "url": "https://github.com/jack21/ClaudeCodeUsage/issues"
+    "url": "https://github.com/huanglune/ClaudeCodeUsage/issues"
   },
-  "homepage": "https://github.com/jack21/ClaudeCodeUsage",
+  "homepage": "https://github.com/huanglune/ClaudeCodeUsage",
   "keywords": [
     "claude",
     "claude-code",
