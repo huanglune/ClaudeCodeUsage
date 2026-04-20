@@ -217,6 +217,24 @@ It then:
 
 Users install by downloading the `.vsix` from Releases and running `code --install-extension <file>.vsix`.
 
+### Automatic version bump (enabled)
+
+`.github/workflows/bump-version.yml` uses a GitHub App token and runs on every push to `main`.
+
+Before enabling it, complete these prerequisites:
+
+1. Create a GitHub App with at least `Contents: Read and write` permission and install it on this repository
+2. Add repo secrets `APP_ID` and `APP_PRIVATE_KEY` in `Settings → Secrets and variables → Actions`
+3. If branch protection Rulesets are enabled, allow this GitHub App in the bypass actors list
+
+The workflow will then:
+
+1. Apply a `patch` bump to `package.json` / `package-lock.json`
+2. Commit the version update back to `main` as `github-actions[bot]`
+
+Default commit message format: `chore(version): bump to vX.Y.Z [skip ci]`.  
+To skip the auto bump for a specific commit, include `[skip version]` in the commit message.
+
 ### Enabling Marketplace auto-publish (not active yet)
 
 When the maintainer registers publishing tokens, the release workflow can also push to the two marketplaces. To enable, add these as repo secrets at `Settings → Secrets and variables → Actions → New repository secret`:
