@@ -94,13 +94,16 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "compile": "tsc -p ./ && node scripts/post-compile.mjs",
+    "watch": "tsc -watch -p ./",
+    "test": "node --import tsx --test scripts/update-pricing.test.ts src/pricing.test.ts",
+    "update-pricing": "tsx scripts/update-pricing.ts"
   },
   "devDependencies": {
     "@types/glob": "^9.0.0",
     "@types/node": "24.0.15",
     "@types/vscode": "^1.74.0",
+    "tsx": "^4.21.0",
     "typescript": "^5.8.3"
   }
 }
