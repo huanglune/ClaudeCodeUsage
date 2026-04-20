@@ -232,7 +232,7 @@ The workflow will then:
 1. Apply a `patch` bump to `package.json` / `package-lock.json`
 2. Commit the version update back to `main` as `github-actions[bot]`
 
-Default commit message format: `chore(version): bump to vX.Y.Z [skip ci]`.  
+Default commit message format: `chore(version): bump to vX.Y.Z [skip version]`.  
 To skip the auto bump for a specific commit, include `[skip version]` in the commit message.
 
 ### Enabling Marketplace auto-publish (not active yet)
