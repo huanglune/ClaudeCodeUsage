@@ -1,0 +1,30 @@
+name: Bump Version
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  bump:
+    if: github.actor != 'github-actions[bot]' && !contains(github.event.head_commit.message, '[skip version]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Bump patch version
+        run: npm version patch --no-git-tag-version
+      - name: Commit and push
+        run: |
+          NEW_VERSION=$(node -e "console.log(require('./package.json').version)")
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json
+          git commit -m "chore(version): bump to v${NEW_VERSION} [skip ci]"
+          git push

@@ -218,6 +218,16 @@ git push origin vX.Y.Z
 
 用户从 Releases 下载 `.vsix`，用 `code --install-extension <file>.vsix` 安装。
 
+### 自动版本递增（已启用）
+
+`.github/workflows/bump-version.yml` 会在每次 push 到 `main` 时自动执行：
+
+1. 对 `package.json` / `package-lock.json` 执行 `patch` 版本递增
+2. 以 `github-actions[bot]` 身份提交回主分支
+
+默认提交信息形如：`chore(version): bump to vX.Y.Z [skip ci]`。  
+如果某次提交不想触发自动升版本，可在提交信息里加入 `[skip version]`。
+
 ### 启用 Marketplace 自动发布（尚未激活）
 
 Maintainer 注册好两个发布 token 之后，release workflow 可以同时推到两个 marketplace。启用方式：在 `Settings → Secrets and variables → Actions → New repository secret` 添加：
