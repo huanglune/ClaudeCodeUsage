@@ -2,7 +2,7 @@
 
 > **Community-maintained fork of [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage).** Original author credit preserved in [LICENSE](LICENSE).
 
-🌐 **Language | 語言 | 言語 | 언어**: [🏠 Main](README.md) | **English** | [繁體中文](README-zh-TW.md) | [简体中文](README-zh-CN.md) | [日本語](README-ja.md) | [한국어](README-ko.md)
+🌐 **Language | 语言**: **English** | [简体中文](README.md)
 
 ---
 
@@ -12,11 +12,11 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 
 ### Status Bar
 
-![Status Bar Preview](https://raw.githubusercontent.com/jack21/ClaudeCodeUsage/refs/heads/main/images/status-bar-preview.jpg)
+![Status Bar Preview](images/status-bar-preview.jpg)
 
 ### Dashboard
 
-![Dashboard Preview](https://raw.githubusercontent.com/jack21/ClaudeCodeUsage/refs/heads/main/images/dashboard-preview.jpg)
+![Dashboard Preview](images/dashboard-preview.jpg)
 
 ## ✨ Features
 
@@ -25,6 +25,13 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 - **Status Bar Display**: Shows today's usage costs in the VSCode status bar
 - **Live Updates**: Automatic data refresh with configurable intervals (minimum 30 seconds)
 - **Zero Dependencies**: Built with native Node.js modules for maximum compatibility
+
+### 💰 Automated Pricing (v2.0)
+
+- **Always-current rates**: Model pricing is fetched weekly from [LiteLLM's community dataset](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json), validated through three guardrails (schema, sanity bounds, 10x jump detector), and committed automatically — no more manual pricing updates when Anthropic announces a new model.
+- **Tiered pricing**: Correctly applies the 200k-token threshold for Claude 4+ 1M-context variants (Opus 4.5+/Sonnet 4.5+).
+- **Offline mode**: `pricingOfflineMode` setting lets you disable the runtime refresh; extension falls back to the snapshot bundled at release time.
+- **Background refresh**: On launch, the extension loads the bundled snapshot instantly, then fires a detached fetch to overlay a fresher copy for next launch — activation is never blocked on the network.
 
 ### 📈 Interactive Analytics Dashboard
 
@@ -39,7 +46,7 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 - **Detailed Tables**: Comprehensive daily/monthly usage breakdowns with drill-down capabilities
 - **Model Analysis**: Per-model cost and token consumption tracking
 
-![Dashboard Preview](images/dashboard-preview.png)
+![Dashboard Preview](images/dashboard-preview.jpg)
 
 ### 🌐 Multi-language Support
 
@@ -54,21 +61,17 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 - **VSCode Theme Integration**: Seamless light/dark theme support
 - **Responsive Design**: Optimized for different screen sizes
 
-## 📥 Download
+## 📥 Download & Installation
 
-### VSCode Marketplace
+This community fork is distributed via [GitHub Releases](https://github.com/huanglune/ClaudeCodeUsage/releases) (not VS Marketplace yet — see [Maintainer Setup](#maintainer-setup)).
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/huanglune.claude-code-usage-community?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=huanglune.claude-code-usage-community) | [Open VSX](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
-
-### Open VSX Registry (for Cursor / Windsurf / Antigravity)
-
-[![Open VSX](https://img.shields.io/open-vsx/v/huanglune/claude-code-usage-community?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
-
-## Installation
-
-1. Install the extension from the VSCode marketplace
-2. The extension will automatically detect your Claude Code data directory
-3. Start using Claude Code and see your usage appear in the status bar
+1. Go to [Releases](https://github.com/huanglune/ClaudeCodeUsage/releases/latest) and download the `extension.vsix` asset.
+2. Install it:
+   ```bash
+   code --install-extension extension.vsix
+   ```
+   Or in VS Code: `Extensions` panel → `…` menu → `Install from VSIX…`.
+3. The extension will auto-detect your Claude Code data directory on startup; today's cost appears in the status bar.
 
 ## Configuration
 
@@ -78,6 +81,7 @@ Access settings via `File > Preferences > Settings` and search for "Claude Code 
 - **Data Directory**: Custom Claude data directory path (leave empty for auto-detection)
 - **Language**: Display language preference
 - **Decimal Places**: Number of decimal places for cost display
+- **Pricing Offline Mode** (v2.0): If true, skip the background LiteLLM fetch and only use the pricing snapshot bundled with the installed extension. Useful for air-gapped environments.
 
 ## 🚀 Usage
 
@@ -131,6 +135,16 @@ Access settings via `File > Preferences > Settings` and search for "Claude Code 
 MIT
 
 ## 📝 Changelog
+
+### v2.0.0 (2026-04-20) — Community fork relaunch
+
+- 🔀 Forked from [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage) (inactive since Nov 2025) and re-published as `huanglune.claude-code-usage-community`
+- 💰 Pricing now auto-synced weekly from LiteLLM with three guardrails — no more hand-editing `src/pricing.ts`
+- 📊 Added tiered pricing support for 1M-context Claude 4+ models (200k threshold)
+- 🌐 Runtime pricing refresh with `pricingOfflineMode` opt-out for air-gapped use
+- 🧪 Added test suite (28 tests covering validate / filter / sanity-check / cost computation)
+- 🤖 Added three GitHub Actions workflows: CI (PR/main verification), weekly pricing sync, tag-triggered release
+- 🗂️ Trimmed documentation to English + Simplified Chinese (extension UI still supports 5 languages)
 
 ### v1.0.8 (2025-11-28)
 

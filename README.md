@@ -1,193 +1,227 @@
-# Claude Code Usage
+# Claude Code 使用量监控
 
-> **Community-maintained fork of [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage).** Original author credit preserved in [LICENSE](LICENSE).
+> **社区维护版 [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage) 分支。** 原作者署名保留于 [LICENSE](LICENSE)。
 
-🌐 **多語言文檔 | Multi-language Documentation | 多语言文档 | 多言語ドキュメント | 다국어 문서**
-
-- [English](README-en.md)
-- [繁體中文](README-zh-TW.md)
-- [简体中文](README-zh-CN.md)
-- [日本語](README-ja.md)
-- [한국어](README-ko.md)
+🌐 **Language | 语言**: **简体中文** | [English](README-en.md)
 
 ---
 
-A comprehensive VSCode extension that monitors Claude Code usage and costs with detailed analytics and interactive visualizations.
+全面的 VSCode 扩展，提供 Claude Code 使用量监控、详细分析和交互式可视化图表。
 
-## 🖼️ Screenshot
+## 🖼️ 截图
 
-### Status Bar
+### 状态栏
 
-![Status Bar Preview](https://raw.githubusercontent.com/jack21/ClaudeCodeUsage/refs/heads/main/images/status-bar-preview.jpg)
+![状态栏预览](images/status-bar-preview.jpg)
 
-### Dashboard
+### 仪表板
 
-![Dashboard Preview](https://raw.githubusercontent.com/jack21/ClaudeCodeUsage/refs/heads/main/images/dashboard-preview.jpg)
+![仪表板预览](images/dashboard-preview.jpg)
 
-## ✨ Features
+## ✨ 功能特色
 
-### 📊 Real-time Monitoring
+### 📊 实时监控
 
-- **Status Bar Display**: Shows today's usage costs in the VSCode status bar
-- **Live Updates**: Automatic data refresh with configurable intervals (minimum 30 seconds)
-- **Zero Dependencies**: Built with native Node.js modules for maximum compatibility
+- **状态栏显示**：在 VSCode 状态栏显示今日使用成本
+- **实时更新**：自动数据刷新，可配置更新间隔（最少 30 秒）
+- **零外部依赖**：使用原生 Node.js 模块，确保最大兼容性
 
-### 📈 Interactive Analytics Dashboard
+### 💰 自动化定价（v2.0）
 
-- **Multiple Time Views**: Today, This Month, and All Time perspectives
-- **Interactive Charts**: Switchable bar charts with 6 different metrics:
-  - Cost breakdown
-  - Input/Output tokens
-  - Cache creation/read tokens
-  - Message counts
-- **Hourly Breakdown**: Detailed hourly usage analysis for today and specific dates
-- **Expandable Monthly Data**: Click on any month in "All Time" to view daily breakdown
-- **Detailed Tables**: Comprehensive daily/monthly usage breakdowns with drill-down capabilities
-- **Model Analysis**: Per-model cost and token consumption tracking
+- **价格始终最新**：每周从 [LiteLLM 社区数据集](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) 自动拉取模型价格，通过三道 guardrail（schema 校验、价格合理区间、10x 跳变检测）后自动提交——Anthropic 发布新模型后不再需要手动改价表。
+- **分档计费**：正确处理 Claude 4+ 1M context 模型的 200k token 阈值（Opus 4.5+ / Sonnet 4.5+）。
+- **离线模式**：`pricingOfflineMode` 配置项可关闭运行时刷新，只用发版时打包的快照。
+- **后台刷新**：启动时瞬间加载打包的快照，然后异步向 LiteLLM 拉最新值写入缓存供下次启动用——启动永不阻塞网络。
 
-![Dashboard Preview](images/dashboard-preview.png)
+### 📈 交互式分析仪表板
 
-### 🌐 Multi-language Support
+- **多重时间视图**：今日、本月和所有时间的使用视角
+- **交互式图表**：可切换的柱状图表，支持 6 种不同指标：
+  - 成本分析
+  - 输入/输出 tokens
+  - 缓存创建/读取 tokens
+  - 消息数量
+- **每小时使用量分析**：提供今日及特定日期的详细每小时使用分析
+- **可展开的月度数据**：点击"所有时间"中的任何月份查看每日明细
+- **详细表格**：完整的每日/每月使用量分析，支持向下深入查询
+- **模型分析**：各模型的成本和 token 消耗跟踪
 
-- **5 Languages**: English, 繁體中文, 简体中文, 日本語, 한국어
-- **Auto-detection**: Automatically detects system language
-- **Manual Override**: Choose your preferred language in settings
+![仪表板预览](images/dashboard-preview.jpg)
 
-### 🎨 Visual Features
+### 🌐 多语言支持
 
-- **Bottom-up Charts**: Industry-standard chart orientation
-- **Monthly Trends**: All-time view shows monthly aggregated data for long-term analysis
-- **VSCode Theme Integration**: Seamless light/dark theme support
-- **Responsive Design**: Optimized for different screen sizes
+- **5 种语言**：English, 繁體中文, 简体中文, 日本語, 한국어
+- **自动检测**：自动检测系统语言
+- **手动覆盖**：在设置中选择偏好语言
 
-## 📥 Download
+### 🎨 视觉功能
 
-### VSCode Marketplace
+- **自下而上图表**：符合行业标准的图表方向
+- **月度趋势**：所有时间视图显示月度聚合数据，便于长期趋势分析
+- **VSCode 主题集成**：完美配合浅色/深色主题
+- **响应式设计**：针对不同屏幕尺寸优化
 
-[![VSCode Marketplace](https://img.shields.io/visual-studio-marketplace/v/huanglune.claude-code-usage-community?style=for-the-badge&logo=visual-studio-code&label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=huanglune.claude-code-usage-community) | [Open VSX](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
+## 📥 下载与安装
 
-### Open VSX Registry (for Cursor / Windsurf / Antigravity)
+当前通过 [GitHub Releases](https://github.com/huanglune/ClaudeCodeUsage/releases) 分发（尚未上架 VS Marketplace，详见 [Maintainer Setup](#maintainer-setup)）。
 
-[![Open VSX](https://img.shields.io/open-vsx/v/huanglune/claude-code-usage-community?style=for-the-badge&logo=eclipseide&label=Open%20VSX%20Registry)](https://open-vsx.org/extension/huanglune/claude-code-usage-community)
+1. 到 [Releases](https://github.com/huanglune/ClaudeCodeUsage/releases/latest) 下载 `extension.vsix`。
+2. 安装：
+   ```bash
+   code --install-extension extension.vsix
+   ```
+   或在 VS Code 里：`扩展` 面板 → `…` 菜单 → `从 VSIX 安装…`。
+3. 扩展启动时自动检测你的 Claude Code 数据目录，今日成本会出现在状态栏。
 
-## Installation
+## 配置
 
-1. Install the extension from the VSCode marketplace
-2. The extension will automatically detect your Claude Code data directory
-3. Start using Claude Code and see your usage appear in the status bar
+通过 `文件 > 首选项 > 设置` 并搜索「Claude Code Usage」来访问设置：
 
-## Configuration
+- **刷新间隔**：更新使用数据的频率（最少 30 秒）
+- **数据目录**：自定义 Claude 数据目录路径（留空以自动检测）
+- **语言**：显示语言偏好
+- **小数位数**：成本显示的小数位数
+- **离线定价模式**（v2.0）：开启后跳过运行时 LiteLLM fetch，只用扩展打包时的快照。适用于内网 / 离线环境。
 
-Access settings via `File > Preferences > Settings` and search for "Claude Code Usage":
+## 🚀 使用方式
 
-- **Refresh Interval**: How often to update usage data (minimum 30 seconds)
-- **Data Directory**: Custom Claude data directory path (leave empty for auto-detection)
-- **Language**: Display language preference
-- **Decimal Places**: Number of decimal places for cost display
+### 状态栏
 
-## 🚀 Usage
+- 显示**今日使用成本**，附带脉冲图标
+- 点击打开详细分析仪表板
 
-### Status Bar
+### 分析仪表板
 
-- Shows **today's usage cost** with a pulse icon
-- Click to open the detailed analytics dashboard
+1. **时间标签**：在今日、本月和所有时间视图之间切换
+2. **图表指标**：点击图表上方的标签切换不同指标：
+   - 成本分析
+   - 输入/输出 tokens
+   - 缓存创建/读取 tokens
+   - 消息数量
+3. **每小时分析**：在"今日"标签中查看每小时使用模式
+4. **可展开数据**：
+   - 点击"本月"中的每日项目可查看每小时明细
+   - 点击"所有时间"中的每月项目可查看每日明细
+5. **交互式表格**：图表下方的详细每日/每月分析
+6. **模型分析**：各标签中的模型使用统计
 
-### Analytics Dashboard
 
-1. **Time Tabs**: Switch between Today, This Month, and All Time views
-2. **Chart Metrics**: Click tabs above charts to switch between:
-   - Cost breakdown
-   - Input/Output tokens
-   - Cache creation/read tokens
-   - Message counts
-3. **Hourly Analysis**: View hourly usage patterns in "Today" tab
-4. **Expandable Data**:
-   - Click on daily entries in "This Month" to see hourly breakdown
-   - Click on monthly entries in "All Time" to see daily breakdown
-5. **Interactive Tables**: Detailed daily/monthly breakdowns below charts
-6. **Model Analysis**: Per-model usage statistics in each tab
+## 📋 系统要求
 
-![Usage Flow](images/usage-flow.png)
+- **Claude Code**：必须安装并运行
+- **VSCode**：1.74.0 或更新版本
+- **Node.js**：仅使用内置模块（无外部依赖）
 
-## 📋 Requirements
+## 🛠️ 故障排除
 
-- **Claude Code**: Must be installed and running
-- **VSCode**: Version 1.74.0 or later
-- **Node.js**: Built-in modules only (no external dependencies)
+### "无 Claude Code 数据"错误
 
-## 🛠️ Troubleshooting
+1. 确保已安装并使用过 Claude Code
+2. 检查扩展首选项中的数据目录设置
+3. 验证 Claude Code 正在 `~/.claude/projects` 或 `~/.config/claude/projects` 生成使用记录
 
-### "No Claude Code Data" Error
+### 图表不更新
 
-1. Ensure Claude Code is installed and has been used
-2. Check the data directory setting in extension preferences
-3. Verify Claude Code is generating usage logs in `~/.claude/projects` or `~/.config/claude/projects`
+1. 切换到不同标签再切回来刷新图表
+2. 检查该时间段是否有实际使用数据
+3. 验证 Claude 使用记录中是否有缓存 tokens
 
-### Charts Not Updating
+### 性能问题
 
-1. Switch to a different tab and back to refresh the chart
-2. Check if the time period has actual usage data
-3. Verify cache tokens are available in your Claude usage
+- 如遇到速度变慢，可增加刷新间隔
+- 扩展使用 1 分钟缓存来减少文件 I/O
 
-### Performance Issues
+## 📝 版本更新日志
 
-- Increase refresh interval if experiencing slowdowns
-- Extension uses 1-minute caching to minimize file I/O
+### v2.0.0 (2026-04-20) — 社区分支重启
 
-## License
-
-MIT
-
-## 📝 Changelog
+- 🔀 从 [jack21/ClaudeCodeUsage](https://github.com/jack21/ClaudeCodeUsage)（2025-11 起停止维护）fork 出来，以 `huanglune.claude-code-usage-community` 身份重新发布
+- 💰 模型定价每周自动从 LiteLLM 同步，三道 guardrail 把关——不再手改 `src/pricing.ts`
+- 📊 新增 Claude 4+ 1M context 模型的 200k token 分档计费支持
+- 🌐 运行时定价刷新，`pricingOfflineMode` 可关闭（内网场景）
+- 🧪 新增测试套件（28 个测试覆盖 validate / filter / sanity-check / 成本计算）
+- 🤖 新增三个 GitHub Actions workflow：CI（PR/main 验证）、每周定价同步、tag 触发发版
+- 🗂️ 文档精简到英文 + 简体中文（扩展 UI 仍支持 5 种语言）
 
 ### v1.0.8 (2025-11-28)
 
-- 📝 Converted all code comments from Traditional Chinese to English
-- 🌍 Improved code internationalization standards
-- 🔧 Enhanced code readability and maintainability
-- 💰 Fixed pricing table with new Opus 4.5 / Haiku 4.5 prices (thanks to [@mxzinke](https://github.com/mxzinke))
-- 🇩🇪 Added German (de-DE) translation support (thanks to [@mxzinke](https://github.com/mxzinke))
+- 📝 将所有代码注释从繁体中文改为英文
+- 🌍 提升代码的国际化标准
+- 🔧 优化代码可读性与维护性
+- 💰 修正定价表，加入新的 Opus 4.5 / Haiku 4.5 价格（感谢 [@mxzinke](https://github.com/mxzinke)）
+- 🇩🇪 新增德语（de-DE）翻译支持（感谢 [@mxzinke](https://github.com/mxzinke)）
 
 ### v1.0.7 (2025-11-28)
 
-- 🌐 Added multilingual translation support for hourly usage labels
-- 🔧 Removed hardcoded Chinese text from code, replaced with i18n translation system
-- ✨ Ensured multilingual consistency across user interface (English, Traditional Chinese, Simplified Chinese, Japanese, Korean)
+- 🌐 新增每小时使用量标签的多语言翻译支持
+- 🔧 移除代码中硬编码的中文文字，改用 i18n 翻译系统
+- ✨ 确保用户界面的多语言一致性（英文、繁体中文、简体中文、日文、韩文）
 
 ### v1.0.6 (2025-08-10)
 
-- 🆕 Added support for Claude Opus 4.1 model pricing
-- 🔄 Updated pricing data to include `claude-opus-4-1-20250805` and `claude-opus-4-1` model IDs
-- 📊 Pricing remains the same as Opus 4 ($15/1M input, $75/1M output tokens)
+- 🆕 新增 Claude Opus 4.1 模型定价支持
+- 🔄 更新定价数据以包含 `claude-opus-4-1-20250805` 和 `claude-opus-4-1` 模型 ID
+- 📊 定价与 Opus 4 相同（$15/1M 输入，$75/1M 输出 tokens）
 
 ### v1.0.5 (2025-01)
 
-- ⏰ Added hourly usage statistics and visualization
-- 📈 Enhanced dashboard with hourly breakdown functionality
-- 🔧 Improved data processing for hourly aggregation
+- ⏰ 新增每小时使用量统计与可视化
+- 📈 增强仪表板的每小时细分功能
+- 🔧 改善每小时汇总的数据处理
 
 ### v1.0.4 (2025-01)
 
-- 📊 Added all-time data calculation functionality
-- 🎨 Updated UI to display all-time usage data with charts and labels
-- 🔄 Fixed data update logic to support new data structure
-- 🌐 Added "All Time" translations to multi-language support
+- 📊 新增全时间数据计算功能
+- 🎨 更新 UI 以显示全时间使用数据与图表和标签
+- 🔄 修正数据更新逻辑以支持新数据结构
+- 🌐 在多语言支持中新增「全时间」翻译
 
 ### v1.0.3 (2025-01)
 
-- 🔗 Updated GitHub repository URL
-- 🖼️ Fixed README image links to point to new repository location
-- 📦 Version bump and repository migration
+- 🔗 更新 GitHub 仓库 URL
+- 🖼️ 修正 README 图片链接指向新仓库位置
+- 📦 版本升级与仓库迁移
 
 ### v1.0.0 (2025-01)
 
-- 🎉 Initial complete release
-- 📊 Real-time Claude Code usage monitoring in status bar
-- 🌐 Multi-language support (English, 繁體中文, 简体中文, 日本語, 한국어)
-- 📈 Interactive analytics dashboard with charts and tables
-- 🎨 VSCode theme integration and responsive design
-- ⚙️ Configurable refresh intervals and settings
+- 🎉 首次完整发行版
+- 📊 状态栏实时 Claude Code 使用量监控
+- 🌐 多语言支持（English, 繁體中文, 简体中文, 日本語, 한국어）
+- 📈 交互式分析仪表板与图表和表格
+- 🎨 VSCode 主题整合与响应式设计
+- ⚙️ 可设定的重新整理间隔与设定
 
-## Contributing
+## 许可证
 
-Issues and pull requests are welcome on the GitHub repository.
+MIT
+
+## 贡献
+
+欢迎在 GitHub 仓库提出 Issue 和 Pull Request。
+
+## Maintainer Setup
+
+### 当前发版流程
+
+`git push tag v*` 触发 `.github/workflows/release.yml`，它会：
+
+1. 编译扩展
+2. 打包出 `.vsix` 文件
+3. 建 GitHub Release 并把 `.vsix` 挂为附件
+
+用户从 Releases 下载 `.vsix`，用 `code --install-extension <file>.vsix` 安装。
+
+### 启用 Marketplace 自动发布（尚未激活）
+
+Maintainer 注册好两个发布 token 之后，release workflow 可以同时推到两个 marketplace。启用方式：在 `Settings → Secrets and variables → Actions → New repository secret` 添加：
+
+| Secret | 获取方式 |
+|---|---|
+| `VSCE_PAT` | https://dev.azure.com/ → User settings → Personal access tokens → New。Scope: *Marketplace (Manage)*。 |
+| `OVSX_PAT` | https://open-vsx.org → Profile → Access Tokens → Generate new token。 |
+
+然后在 `.github/workflows/release.yml` 里把 `vsce publish` 和 `ovsx publish` 两行 step 加回去。
+
+### 定价更新
+
+`src/pricing-data.json` 由 `.github/workflows/update-pricing.yml` 每周一 03:00 UTC 自动从 [LiteLLM](https://github.com/BerriAI/litellm/blob/main/model_prices_and_context_window.json) 同步。脚本在提交前过三道 guardrail（schema / 价格区间 / 10x 跳变检测）。手动触发：`gh workflow run update-pricing.yml`。
