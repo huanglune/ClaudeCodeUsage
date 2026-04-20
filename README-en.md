@@ -202,7 +202,14 @@ Issues and pull requests are welcome on the GitHub repository.
 
 ### Current release flow
 
-`git push tag v*` triggers `.github/workflows/release.yml`, which:
+Creating and pushing a version tag triggers `.github/workflows/release.yml`, for example:
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+It then:
 
 1. Compiles the extension
 2. Packages a `.vsix` file

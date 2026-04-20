@@ -203,7 +203,14 @@ MIT
 
 ### 当前发版流程
 
-`git push tag v*` 触发 `.github/workflows/release.yml`，它会：
+创建并推送版本标签会触发 `.github/workflows/release.yml`，例如：
+
+```bash
+git tag vX.Y.Z
+git push origin vX.Y.Z
+```
+
+它会：
 
 1. 编译扩展
 2. 打包出 `.vsix` 文件
