@@ -1,0 +1,26 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Type check
+        run: npx tsc -p ./ --noEmit
+      - name: Run unit tests
+        run: npm test
+      - name: Package extension (verify manifest)
+        run: npx vsce package -o /tmp/extension.vsix --no-dependencies
+      - name: Confirm pricing-data.json is bundled
+        run: unzip -l /tmp/extension.vsix | grep 'extension/out/pricing-data.json'

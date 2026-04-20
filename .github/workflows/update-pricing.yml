@@ -1,0 +1,36 @@
+name: Update Pricing Snapshot
+
+on:
+  schedule:
+    - cron: '0 3 * * 1'   # Mondays 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - run: npm ci
+      - name: Fetch and validate
+        run: npm run update-pricing
+      - name: Commit if changed
+        run: |
+          if git diff --quiet src/pricing-data.json; then
+            echo "No pricing change; skipping commit."
+            exit 0
+          fi
+          SRC_SHA=$(node -e "console.log(require('./src/pricing-data.json')._meta.source_commit)")
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src/pricing-data.json
+          git commit -m "chore(pricing): sync LiteLLM snapshot @ ${SRC_SHA}"
+          git push
