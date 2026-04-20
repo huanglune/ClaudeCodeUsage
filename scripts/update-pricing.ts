@@ -11,7 +11,19 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import type { ModelPricing, PricingSnapshot } from '../src/types';
+
+// Honour HTTP(S)_PROXY / http(s)_proxy if set (local dev behind corporate proxy).
+// CI runners have no proxy, so these branches are no-ops there.
+const proxyUrl =
+  process.env.HTTPS_PROXY ??
+  process.env.https_proxy ??
+  process.env.HTTP_PROXY ??
+  process.env.http_proxy;
+if (proxyUrl) {
+  setGlobalDispatcher(new ProxyAgent(proxyUrl));
+}
 
 // ---------- Constants ----------
 
@@ -19,7 +31,7 @@ const LITELLM_URL =
   'https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json';
 const LITELLM_COMMIT_URL = 'https://api.github.com/repos/BerriAI/litellm/commits/main';
 const SNAPSHOT_PATH = resolve('src/pricing-data.json');
-const FETCH_TIMEOUT_MS = 10_000;
+const FETCH_TIMEOUT_MS = 30_000;
 const FETCH_RETRIES = 3;
 
 const MAX_REASONABLE_PRICE_PER_TOKEN = 1e-3; // $1000 / 1M tokens
