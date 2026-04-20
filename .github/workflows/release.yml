@@ -8,6 +8,11 @@ on:
 permissions:
   contents: write
 
+# Currently: tag push produces a .vsix artifact attached to the GitHub
+# Release page. Marketplace publishing (VS Marketplace + Open VSX) is
+# intentionally OFF until the maintainer registers tokens. See
+# README-en.md § "Maintainer Setup" for the re-enable steps.
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -21,14 +26,6 @@ jobs:
       - run: npm run compile
       - name: Package .vsix
         run: npx vsce package -o extension.vsix --no-dependencies
-      - name: Publish to VS Marketplace
-        run: npx vsce publish --packagePath extension.vsix
-        env:
-          VSCE_PAT: ${{ secrets.VSCE_PAT }}
-      - name: Publish to Open VSX
-        run: npx ovsx publish extension.vsix
-        env:
-          OVSX_PAT: ${{ secrets.OVSX_PAT }}
       - name: Attach .vsix to GitHub release
         uses: softprops/action-gh-release@v2
         with:

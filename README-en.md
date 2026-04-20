@@ -186,14 +186,26 @@ Issues and pull requests are welcome on the GitHub repository.
 
 ## Maintainer Setup
 
-Releases are fully automated on `git push tag v*`. The release workflow needs two repo secrets:
+### Current release flow
+
+`git push tag v*` triggers `.github/workflows/release.yml`, which:
+
+1. Compiles the extension
+2. Packages a `.vsix` file
+3. Creates a GitHub Release with the `.vsix` attached
+
+Users install by downloading the `.vsix` from Releases and running `code --install-extension <file>.vsix`.
+
+### Enabling Marketplace auto-publish (not active yet)
+
+When the maintainer registers publishing tokens, the release workflow can also push to the two marketplaces. To enable, add these as repo secrets at `Settings → Secrets and variables → Actions → New repository secret`:
 
 | Secret | How to get |
 |---|---|
 | `VSCE_PAT` | https://dev.azure.com/ → User settings → Personal access tokens → New. Scope: *Marketplace (Manage)*. |
 | `OVSX_PAT` | https://open-vsx.org → Profile → Access Tokens → Generate new token. |
 
-Configure at: `Settings → Secrets and variables → Actions → New repository secret`.
+Then uncomment / re-add the `vsce publish` and `ovsx publish` steps in `.github/workflows/release.yml`.
 
 ### Pricing updates
 
