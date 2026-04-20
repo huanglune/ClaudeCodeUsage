@@ -17,3 +17,6 @@ tsconfig.json
 tslint.json
 **/*.ts.map
 **/*.js.map
+scripts/**
+docs/**
+.github/**
