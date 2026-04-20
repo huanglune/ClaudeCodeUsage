@@ -220,7 +220,15 @@ git push origin vX.Y.Z
 
 ### 自动版本递增（已启用）
 
-`.github/workflows/bump-version.yml` 会在每次 push 到 `main` 时自动执行：
+`.github/workflows/bump-version.yml` 使用 `ADMIN_PAT` 在每次 push 到 `main` 时自动执行。
+
+启用前需要先完成：
+
+1. 用仓库管理员账号创建 Fine-grained PAT（权限至少 `Contents: Read and write`）
+2. 在 `Settings → Secrets and variables → Actions` 新建仓库 Secret：`ADMIN_PAT`
+3. 在分支保护规则（Rulesets）中把该 PAT 所属账号（或角色）加入 Bypass list
+
+工作流会自动：
 
 1. 对 `package.json` / `package-lock.json` 执行 `patch` 版本递增
 2. 以 `github-actions[bot]` 身份提交回主分支
