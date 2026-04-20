@@ -71,6 +71,11 @@
           "minimum": 0,
           "maximum": 4,
           "description": "Number of decimal places for cost display"
+        },
+        "claudeCodeUsage.pricingOfflineMode": {
+          "type": "boolean",
+          "default": false,
+          "description": "If true, do not fetch the latest Claude model pricing from LiteLLM at startup. Only use the snapshot bundled with the extension."
         }
       }
     },
