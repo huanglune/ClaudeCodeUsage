@@ -169,7 +169,7 @@ export class ClaudeCodeUsageExtension {
     }
 
     if (this.shouldReload(this.cache.codex, nextKey, forceReload)) {
-      const records = await CodexDataLoader.loadRecords(config, true);
+      const records = await CodexDataLoader.loadRecords(config, forceReload);
       this.cache.codex = {
         records,
         lastUpdate: new Date(),
