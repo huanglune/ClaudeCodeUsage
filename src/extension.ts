@@ -187,7 +187,7 @@ export class ClaudeCodeUsageExtension {
     if (this.usageCache && this.cacheFingerprint === fingerprint) {
       return this.usageCache;
     }
-    this.usageCache = await UsageCache.load(this.context, fingerprint);
+    this.usageCache = await UsageCache.load(this.context.globalStorageUri.fsPath, fingerprint);
     this.cacheFingerprint = fingerprint;
     return this.usageCache;
   }

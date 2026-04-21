@@ -1,4 +1,5 @@
-import * as vscode from 'vscode';
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import * as path from 'node:path';
 import { UsageData } from './types';
 
 /**
@@ -27,25 +28,21 @@ const CACHE_FILE_NAME = 'usage-cache.v2.json';
 
 export class UsageCache {
   private constructor(
-    private readonly uri: vscode.Uri,
+    private readonly filePath: string,
     private data: CacheDisk,
     private dirty: boolean,
   ) {}
 
-  static async load(context: vscode.ExtensionContext, pricingFingerprint: string): Promise<UsageCache> {
-    // globalStorageUri 首次不存在，主动建一下。忽略 EEXIST。
-    try {
-      await vscode.workspace.fs.createDirectory(context.globalStorageUri);
-    } catch {
-      /* ignore */
-    }
+  static async load(storageDir: string, pricingFingerprint: string): Promise<UsageCache> {
+    // storageDir 首次不存在，主动建一下。recursive:true 让 EEXIST 不抛错。
+    await mkdir(storageDir, { recursive: true });
 
-    const uri = vscode.Uri.joinPath(context.globalStorageUri, CACHE_FILE_NAME);
+    const filePath = path.join(storageDir, CACHE_FILE_NAME);
 
     let data: CacheDisk | null = null;
     try {
-      const bytes = await vscode.workspace.fs.readFile(uri);
-      const parsed = JSON.parse(Buffer.from(bytes).toString('utf-8')) as CacheDisk;
+      const text = await readFile(filePath, 'utf-8');
+      const parsed = JSON.parse(text) as CacheDisk;
       if (
         parsed.version === CACHE_FORMAT_VERSION &&
         parsed.pricingFingerprint === pricingFingerprint &&
@@ -66,10 +63,10 @@ export class UsageCache {
         codex: {},
       };
       // 指纹变了就当整体作废；写回磁盘以防下次再被"识别到老指纹"
-      return new UsageCache(uri, data, true);
+      return new UsageCache(filePath, data, true);
     }
 
-    return new UsageCache(uri, data, false);
+    return new UsageCache(filePath, data, false);
   }
 
   getEntry(provider: CacheProvider, filePath: string): FileBucketEntry | undefined {
@@ -97,8 +94,7 @@ export class UsageCache {
 
   async save(): Promise<void> {
     if (!this.dirty) return;
-    const json = JSON.stringify(this.data);
-    await vscode.workspace.fs.writeFile(this.uri, Buffer.from(json, 'utf-8'));
+    await writeFile(this.filePath, JSON.stringify(this.data), 'utf-8');
     this.dirty = false;
   }
 }
