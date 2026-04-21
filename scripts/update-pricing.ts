@@ -1,6 +1,6 @@
-// Build-time tool: fetches Claude model pricing from the LiteLLM community
+// Build-time tool: fetches Claude/OpenAI model pricing from the LiteLLM community
 // dataset, runs three guardrails (schema, per-field sanity bounds, diff-based
-// 10x jump detector), and writes src/pricing-data.json on change.
+// family jump detector), and writes src/pricing-data.json on change.
 //
 // Exit codes:
 //   0 — success (wrote file if changed, or no-op if unchanged)
@@ -59,9 +59,14 @@ const ALLOWED_NUMBER_FIELDS: readonly (keyof ModelPricing)[] = [
 ];
 
 const CLAUDE_PREFIXES = ['claude-', 'anthropic/claude-', 'anthropic.claude-'] as const;
+const OPENAI_PREFIXES = ['gpt-', 'o1', 'o3', 'openai/gpt-', 'openai/o'] as const;
+const SUPPORTED_PREFIXES = [...CLAUDE_PREFIXES, ...OPENAI_PREFIXES] as const;
 
-const MAX_RATIO = 10;
-const MIN_RATIO = 1 / MAX_RATIO;
+const RATIO_BY_FAMILY = {
+  claude: 10,
+  openai: 20,
+  default: 10,
+} as const;
 
 // ---------- Pure validators (tested) ----------
 
@@ -101,14 +106,24 @@ export function validateModelPricing(input: unknown): ValidationResult {
   return { ok: true, value: out };
 }
 
-function isClaudeKey(key: string): boolean {
-  return CLAUDE_PREFIXES.some((p) => key.startsWith(p));
+export function isSupportedKey(key: string): boolean {
+  return SUPPORTED_PREFIXES.some((p) => key.startsWith(p));
 }
 
-export function filterClaudeModels(raw: Record<string, unknown>): Record<string, ModelPricing> {
+function getGuardrailRatio(key: string): number {
+  if (CLAUDE_PREFIXES.some((p) => key.startsWith(p))) {
+    return RATIO_BY_FAMILY.claude;
+  }
+  if (OPENAI_PREFIXES.some((p) => key.startsWith(p))) {
+    return RATIO_BY_FAMILY.openai;
+  }
+  return RATIO_BY_FAMILY.default;
+}
+
+export function filterSupportedModels(raw: Record<string, unknown>): Record<string, ModelPricing> {
   const out: Record<string, ModelPricing> = {};
   for (const [key, value] of Object.entries(raw)) {
-    if (!isClaudeKey(key)) continue;
+    if (!isSupportedKey(key)) continue;
     const v = validateModelPricing(value);
     if (!v.ok) continue;
     out[key] = v.value;
@@ -135,11 +150,13 @@ export function sanityCheckAgainstPrevious(
       if (pv === 0 || nv === 0) {
         return { ok: false, reason: `${modelName}.${field} crossed zero (${pv} -> ${nv})` };
       }
+      const maxRatio = getGuardrailRatio(modelName);
+      const minRatio = 1 / maxRatio;
       const ratio = nv / pv;
-      if (ratio > MAX_RATIO || ratio < MIN_RATIO) {
+      if (ratio > maxRatio || ratio < minRatio) {
         return {
           ok: false,
-          reason: `${modelName}.${field} changed ${ratio.toFixed(2)}x (${pv} -> ${nv}); exceeds ${MAX_RATIO}x guardrail`,
+          reason: `${modelName}.${field} changed ${ratio.toFixed(2)}x (${pv} -> ${nv}); exceeds ${maxRatio}x guardrail`,
         };
       }
     }
@@ -208,12 +225,12 @@ async function main(): Promise<void> {
   console.log('[pricing] fetching LiteLLM dataset...');
   const [raw, sourceCommit] = await Promise.all([fetchLiteLLMPricing(), fetchLiteLLMHeadSha()]);
 
-  const filtered = filterClaudeModels(raw);
+  const filtered = filterSupportedModels(raw);
   const modelCount = Object.keys(filtered).length;
   if (modelCount === 0) {
-    throw new Error('No Claude models found in LiteLLM dataset — bailing out (would produce empty snapshot)');
+    throw new Error('No supported models found in LiteLLM dataset — bailing out (would produce empty snapshot)');
   }
-  console.log(`[pricing] kept ${modelCount} Claude models`);
+  console.log(`[pricing] kept ${modelCount} supported models`);
 
   const prev = loadPrevious();
   if (prev != null) {

@@ -179,7 +179,7 @@ export class ClaudeDataLoader {
                 processedHashes.add(uniqueHash);
               }
 
-              records.push(data as ClaudeUsageRecord);
+              records.push({ ...(data as ClaudeUsageRecord), provider: 'claude' });
             } catch (parseError) {
               console.warn(`Failed to parse line in ${file}:`, parseError);
             }
@@ -254,6 +254,7 @@ export class ClaudeDataLoader {
       totalOutputTokens: 0,
       totalCacheCreationTokens: 0,
       totalCacheReadTokens: 0,
+      totalReasoningTokens: 0,
       totalCost: 0,
       messageCount: 0,
       modelBreakdown: {},
@@ -267,6 +268,7 @@ export class ClaudeDataLoader {
 
       const usage = record.message.usage;
       const model = record.message.model;
+      const provider = record.provider === 'codex' ? 'codex' : 'claude';
 
       // Skip error records and invalid records
       if (model === '<synthetic>' || record.isApiErrorMessage) {
@@ -275,7 +277,9 @@ export class ClaudeDataLoader {
 
       // Skip records where all tokens are 0
       const tokenSum = usage.input_tokens + usage.output_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
-      if (tokenSum === 0) {
+      const reasoningTokens = usage.reasoning_output_tokens || 0;
+      const totalTokenSum = tokenSum + reasoningTokens;
+      if (totalTokenSum === 0) {
         continue;
       }
 
@@ -286,6 +290,7 @@ export class ClaudeDataLoader {
       data.totalOutputTokens += usage.output_tokens;
       data.totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
       data.totalCacheReadTokens += usage.cache_read_input_tokens || 0;
+      data.totalReasoningTokens += reasoningTokens;
       data.totalCost += calculatedCost;
       data.messageCount++;
 
@@ -295,8 +300,10 @@ export class ClaudeDataLoader {
           outputTokens: 0,
           cacheCreationTokens: 0,
           cacheReadTokens: 0,
+          reasoningTokens: 0,
           cost: 0,
           count: 0,
+          provider,
         };
       }
 
@@ -305,6 +312,7 @@ export class ClaudeDataLoader {
       modelData.outputTokens += usage.output_tokens;
       modelData.cacheCreationTokens += usage.cache_creation_input_tokens || 0;
       modelData.cacheReadTokens += usage.cache_read_input_tokens || 0;
+      modelData.reasoningTokens += reasoningTokens;
       modelData.cost += calculatedCost;
       modelData.count++;
     }

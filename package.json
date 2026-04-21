@@ -2,7 +2,7 @@
   "name": "claude-code-usage-community",
   "displayName": "Claude Code Usage (Community)",
   "description": "Monitor Claude Code usage and costs in VSCode status bar (community-maintained fork)",
-  "version": "2.0.3",
+  "version": "2.1.0",
   "publisher": "huanglune",
   "author": "huangliang",
   "license": "MIT",
@@ -57,6 +57,7 @@
           "enum": [
             "auto",
             "en",
+            "de-DE",
             "zh-TW",
             "zh-CN",
             "ja",
@@ -76,6 +77,21 @@
           "type": "boolean",
           "default": false,
           "description": "If true, do not fetch the latest Claude model pricing from LiteLLM at startup. Only use the snapshot bundled with the extension."
+        },
+        "claudeCodeUsage.codex.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable Codex usage scanning and UI rendering."
+        },
+        "claudeCodeUsage.codex.includeArchived": {
+          "type": "boolean",
+          "default": false,
+          "description": "Include <codex-home>/archived_sessions/**/*.jsonl when loading Codex records."
+        },
+        "claudeCodeUsage.codex.dataDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Custom Codex data directory path (overrides CODEX_HOME and ~/.codex)."
         }
       }
     },
@@ -99,9 +115,9 @@
   },
   "scripts": {
     "vscode:prepublish": "npm run compile",
-    "compile": "tsc -p ./ && node scripts/post-compile.mjs",
+    "compile": "rm -rf out && tsc -p ./ && node scripts/post-compile.mjs",
     "watch": "tsc -watch -p ./",
-    "test": "node --import tsx --test scripts/update-pricing.test.ts src/pricing.test.ts",
+    "test": "node --import tsx --test scripts/update-pricing.test.ts src/pricing.test.ts src/codexDataLoader.test.ts",
     "update-pricing": "tsx scripts/update-pricing.ts"
   },
   "devDependencies": {

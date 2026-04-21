@@ -8,6 +8,14 @@
 
 全面的 VSCode 扩展，提供 Claude Code 使用量监控、详细分析和交互式可视化图表。
 
+## v2.1 新功能
+
+- 新增 Codex 会话日志统计（`~/.codex/sessions/**/*.jsonl`，可选包含 `archived_sessions`）。
+- Webview 新增 Provider 切换 Pill：`Overview | Claude | Codex`。
+- 新增 Overview 总览：热力图、连续活跃天数、会话数、最活跃日、最常用模型等指标。
+- 状态栏升级为双源显示：`$(pulse) $Claude / $(zap) $Codex`。
+- 新增 Codex `reasoning tokens` 统计，并在 UI 中统一标注为官方定价等价成本（list-price equivalent）。
+
 ## 🖼️ 截图
 
 ### 状态栏
@@ -23,6 +31,7 @@
 ### 📊 实时监控
 
 - **状态栏显示**：在 VSCode 状态栏显示今日使用成本
+- **Codex 支持**：可将 Codex 使用量合并到同一状态栏与仪表板
 - **实时更新**：自动数据刷新，可配置更新间隔（最少 30 秒）
 - **零外部依赖**：使用原生 Node.js 模块，确保最大兼容性
 
@@ -77,11 +86,18 @@
 
 通过 `文件 > 首选项 > 设置` 并搜索「Claude Code Usage」来访问设置：
 
-- **刷新间隔**：更新使用数据的频率（最少 30 秒）
-- **数据目录**：自定义 Claude 数据目录路径（留空以自动检测）
-- **语言**：显示语言偏好
-- **小数位数**：成本显示的小数位数
-- **离线定价模式**（v2.0）：开启后跳过运行时 LiteLLM fetch，只用扩展打包时的快照。适用于内网 / 离线环境。
+| 配置项 | 类型 | 默认值 | 说明 |
+|---|---|---|---|
+| `claudeCodeUsage.refreshInterval` | number | `60` | 使用量刷新间隔（最少 30 秒）。 |
+| `claudeCodeUsage.dataDirectory` | string | `\"\"` | Claude 数据目录（为空时自动探测）。 |
+| `claudeCodeUsage.codex.enabled` | boolean | `true` | 是否启用 Codex 扫描与展示。 |
+| `claudeCodeUsage.codex.includeArchived` | boolean | `false` | 是否包含 `archived_sessions/**/*.jsonl`。 |
+| `claudeCodeUsage.codex.dataDirectory` | string | `\"\"` | 指定 Codex 数据目录（优先于 `CODEX_HOME` 和 `~/.codex`）。 |
+| `claudeCodeUsage.language` | string | `auto` | 界面语言。 |
+| `claudeCodeUsage.decimalPlaces` | number | `2` | 费用显示小数位。 |
+| `claudeCodeUsage.pricingOfflineMode` | boolean | `false` | 仅使用内置价格快照，不做运行时远程刷新。 |
+
+费用口径说明：扩展显示的是 **官方定价等价成本（list-price equivalent）**，不会自动感知第三方代理/套餐（如 Packycode、Azure 代理通道）的实际结算账单。
 
 ## 🚀 使用方式
 

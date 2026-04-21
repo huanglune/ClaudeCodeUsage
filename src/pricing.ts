@@ -24,6 +24,7 @@ export interface TokenUsage {
   output_tokens: number;
   cache_creation_input_tokens?: number;
   cache_read_input_tokens?: number;
+  reasoning_output_tokens?: number;
 }
 
 const TIERED_THRESHOLD = 200_000;
@@ -94,7 +95,7 @@ async function refreshFromNetwork(cacheFile: string): Promise<void> {
 
     const filtered: Record<string, ModelPricing> = {};
     for (const [key, value] of Object.entries(raw)) {
-      if (!isClaudeKey(key)) continue;
+      if (!isSupportedKey(key)) continue;
       if (value == null || typeof value !== 'object') continue;
       filtered[key] = value as ModelPricing;
     }
@@ -117,17 +118,23 @@ async function refreshFromNetwork(cacheFile: string): Promise<void> {
   }
 }
 
-function isClaudeKey(key: string): boolean {
+function isSupportedKey(key: string): boolean {
   return (
     key.startsWith('claude-') ||
     key.startsWith('anthropic/claude-') ||
-    key.startsWith('anthropic.claude-')
+    key.startsWith('anthropic.claude-') ||
+    key.startsWith('gpt-') ||
+    key.startsWith('o1') ||
+    key.startsWith('o3') ||
+    key.startsWith('openai/gpt-') ||
+    key.startsWith('openai/o')
   );
 }
 
 export function getModelPricing(modelName: string | undefined): ModelPricing | null {
   if (!modelName) return null;
-  const normalized = modelName.replace(/^anthropic\//, '');
+  const normalized = modelName.replace(/^anthropic\//, '').trim();
+  if (normalized.length === 0) return null;
 
   if (pricing[normalized]) return pricing[normalized];
 
@@ -135,13 +142,22 @@ export function getModelPricing(modelName: string | undefined): ModelPricing | n
     normalized,
     `anthropic/${normalized}`,
     `anthropic.${normalized}`,
+    `openai/${normalized}`,
     normalized.replace(/-\d{8}$/, ''),
   ];
   for (const v of variations) {
     if (pricing[v]) return pricing[v];
   }
 
-  const families = ['opus', 'haiku', 'sonnet'] as const;
+  const stripped = stripKnownSuffix(normalized);
+  if (stripped !== normalized) {
+    const strippedResult = getModelPricing(stripped);
+    if (strippedResult != null) {
+      return strippedResult;
+    }
+  }
+
+  const families = ['opus', 'haiku', 'sonnet', 'gpt-5', 'gpt-4.1', 'gpt-4o', 'o3', 'o1'] as const;
   for (const family of families) {
     if (normalized.includes(family)) {
       const candidate = latestOfFamily(family);
@@ -155,7 +171,17 @@ export function getModelPricing(modelName: string | undefined): ModelPricing | n
   return lastResort;
 }
 
-function latestOfFamily(family: 'opus' | 'haiku' | 'sonnet'): ModelPricing | null {
+function stripKnownSuffix(model: string): string {
+  const suffixes = ['-codex-max-xhigh', '-codex', '-high', '-low', '-thinking'] as const;
+  for (const suffix of suffixes) {
+    if (model.endsWith(suffix) && model.length > suffix.length) {
+      return model.slice(0, -suffix.length);
+    }
+  }
+  return model;
+}
+
+function latestOfFamily(family: string): ModelPricing | null {
   // Lexicographic sort — model names carry monotone version suffixes
   // (claude-opus-4-7 < claude-opus-4-7-20260416). Dated IDs win over bare
   // aliases, which matches the Anthropic canonical-ID convention.
@@ -177,6 +203,11 @@ export function calculateCostFromPricing(tokens: TokenUsage, p: ModelPricing): n
       tokens.cache_read_input_tokens,
       p.cache_read_input_token_cost,
       p.cache_read_input_token_cost_above_200k_tokens,
+    ) +
+    tieredCost(
+      tokens.reasoning_output_tokens,
+      p.output_cost_per_token,
+      p.output_cost_per_token_above_200k_tokens,
     )
   );
 }
