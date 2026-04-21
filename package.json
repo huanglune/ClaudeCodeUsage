@@ -73,6 +73,37 @@
           "maximum": 4,
           "description": "Number of decimal places for cost display"
         },
+        "claudeCodeUsage.timezone": {
+          "type": "string",
+          "enum": [
+            "auto",
+            "UTC",
+            "Asia/Shanghai",
+            "Asia/Hong_Kong",
+            "Asia/Tokyo",
+            "Asia/Seoul",
+            "Asia/Singapore",
+            "Europe/London",
+            "Europe/Berlin",
+            "America/New_York",
+            "America/Los_Angeles"
+          ],
+          "enumDescriptions": [
+            "Follow the operating system timezone",
+            "Coordinated Universal Time",
+            "China Standard Time (UTC+8)",
+            "Hong Kong Time (UTC+8)",
+            "Japan Standard Time (UTC+9)",
+            "Korea Standard Time (UTC+9)",
+            "Singapore Time (UTC+8)",
+            "UK (UTC or UTC+1)",
+            "Central Europe (UTC+1 or UTC+2)",
+            "US Eastern (UTC-5 or UTC-4)",
+            "US Pacific (UTC-8 or UTC-7)"
+          ],
+          "default": "auto",
+          "description": "Timezone used to bucket daily/hourly usage and determine 'today'. Changing this rebuilds the cache on next refresh."
+        },
         "claudeCodeUsage.pricingOfflineMode": {
           "type": "boolean",
           "default": false,
@@ -109,6 +140,11 @@
       {
         "command": "claudeCodeUsage.openSettings",
         "title": "Open Settings",
+        "category": "Claude Code Usage"
+      },
+      {
+        "command": "claudeCodeUsage.showLogs",
+        "title": "Show Logs",
         "category": "Claude Code Usage"
       }
     ]
