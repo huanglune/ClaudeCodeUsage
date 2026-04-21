@@ -1,63 +1,75 @@
 import * as vscode from 'vscode';
 import { ClaudeDataLoader } from './dataLoader';
+import { CodexDataLoader } from './codexDataLoader';
 import { StatusBarManager } from './statusBar';
 import { UsageWebviewProvider } from './webview';
 import { I18n } from './i18n';
 import { initPricing } from './pricing';
-import { ExtensionConfig, UsageData, SessionData } from './types';
+import { ClaudeUsageRecord, ExtensionConfig } from './types';
+
+interface ProviderCache {
+  records: ClaudeUsageRecord[];
+  lastUpdate: Date;
+  key: string | null;
+}
 
 export class ClaudeCodeUsageExtension {
   private statusBar: StatusBarManager;
   private webviewProvider: UsageWebviewProvider;
   private refreshTimer: NodeJS.Timeout | undefined;
   private cache: {
-    records: any[];
-    lastUpdate: Date;
-    dataDirectory: string | null;
+    claude: ProviderCache;
+    codex: ProviderCache;
   } = {
-    records: [],
-    lastUpdate: new Date(0),
-    dataDirectory: null
+    claude: {
+      records: [],
+      lastUpdate: new Date(0),
+      key: null,
+    },
+    codex: {
+      records: [],
+      lastUpdate: new Date(0),
+      key: null,
+    },
   };
 
   constructor(private context: vscode.ExtensionContext) {
-    console.log('Claude Code Usage Extension: Constructor called');
     this.statusBar = new StatusBarManager();
     this.webviewProvider = new UsageWebviewProvider(context);
-    
+
     this.setupCommands();
     this.loadConfiguration();
     this.startAutoRefresh();
-    this.refreshData();
-    console.log('Claude Code Usage Extension: Initialization complete');
+    void this.refreshData();
   }
 
   private setupCommands(): void {
     const commands = [
       vscode.commands.registerCommand('claudeCodeUsage.refresh', () => {
-        this.refreshData();
+        void this.refreshData(true);
       }),
       vscode.commands.registerCommand('claudeCodeUsage.showDetails', () => {
         this.webviewProvider.show();
       }),
       vscode.commands.registerCommand('claudeCodeUsage.openSettings', () => {
-        vscode.commands.executeCommand('workbench.action.openSettings', 'claudeCodeUsage');
-      })
+        void vscode.commands.executeCommand('workbench.action.openSettings', 'claudeCodeUsage');
+      }),
     ];
 
-    commands.forEach(command => this.context.subscriptions.push(command));
+    commands.forEach((command) => this.context.subscriptions.push(command));
   }
 
   private loadConfiguration(): void {
     const config = this.getConfiguration();
     I18n.setLanguage(config.language as any);
-    
-    // Listen for configuration changes
-    vscode.workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('claudeCodeUsage')) {
-        this.onConfigurationChanged();
-      }
-    });
+
+    this.context.subscriptions.push(
+      vscode.workspace.onDidChangeConfiguration((event) => {
+        if (event.affectsConfiguration('claudeCodeUsage')) {
+          this.onConfigurationChanged();
+        }
+      }),
+    );
   }
 
   private getConfiguration(): ExtensionConfig {
@@ -65,137 +77,210 @@ export class ClaudeCodeUsageExtension {
     return {
       refreshInterval: config.get('refreshInterval', 60),
       dataDirectory: config.get('dataDirectory', ''),
+      codexEnabled: config.get('codex.enabled', true),
+      codexIncludeArchived: config.get('codex.includeArchived', false),
+      codexDataDirectory: config.get('codex.dataDirectory', ''),
       language: config.get('language', 'auto'),
-      decimalPlaces: config.get('decimalPlaces', 2)
+      decimalPlaces: config.get('decimalPlaces', 2),
     };
   }
 
   private onConfigurationChanged(): void {
     const config = this.getConfiguration();
     I18n.setLanguage(config.language as any);
-    
-    // Restart auto-refresh with new interval
     this.startAutoRefresh();
-    
-    // Clear cache if data directory changed
-    if (config.dataDirectory !== this.cache.dataDirectory) {
-      this.cache.records = [];
-      this.cache.lastUpdate = new Date(0);
-      this.cache.dataDirectory = config.dataDirectory;
+
+    const claudeKey = this.getClaudeCacheKey(config);
+    if (claudeKey !== this.cache.claude.key) {
+      this.cache.claude = { records: [], lastUpdate: new Date(0), key: claudeKey };
     }
-    
-    // Refresh data immediately
-    this.refreshData();
+
+    const codexKey = this.getCodexCacheKey(config);
+    if (codexKey !== this.cache.codex.key) {
+      this.cache.codex = { records: [], lastUpdate: new Date(0), key: codexKey };
+      CodexDataLoader.invalidateCache();
+    }
+
+    void this.refreshData(true);
+  }
+
+  private getClaudeCacheKey(config: ExtensionConfig): string {
+    return config.dataDirectory || '__auto__';
+  }
+
+  private getCodexCacheKey(config: ExtensionConfig): string {
+    return `${config.codexEnabled}|${config.codexIncludeArchived}|${config.codexDataDirectory || '__auto__'}`;
   }
 
   private startAutoRefresh(): void {
-    // Clear existing timer
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
     }
 
     const config = this.getConfiguration();
-    const intervalMs = Math.max(config.refreshInterval * 1000, 30000); // Minimum 30 seconds
-
+    const intervalMs = Math.max(config.refreshInterval * 1000, 30_000);
     this.refreshTimer = setInterval(() => {
-      this.refreshData();
+      void this.refreshData();
     }, intervalMs);
   }
 
-  private async refreshData(): Promise<void> {
+  private shouldReload(cache: ProviderCache, nextKey: string, forceReload: boolean): boolean {
+    if (forceReload) return true;
+    if (cache.key !== nextKey) return true;
+    return Date.now() - cache.lastUpdate.getTime() > 60_000;
+  }
+
+  private async loadClaudeRecords(
+    config: ExtensionConfig,
+    forceReload: boolean,
+  ): Promise<{ records: ClaudeUsageRecord[]; dataDirectory: string | null }> {
+    const dataDirectory = await ClaudeDataLoader.findClaudeDataDirectory(config.dataDirectory || undefined);
+    if (!dataDirectory) {
+      this.cache.claude = {
+        records: [],
+        lastUpdate: new Date(),
+        key: this.getClaudeCacheKey(config),
+      };
+      return { records: [], dataDirectory: null };
+    }
+
+    const nextKey = dataDirectory;
+    if (this.shouldReload(this.cache.claude, nextKey, forceReload)) {
+      const records = await ClaudeDataLoader.loadUsageRecords(dataDirectory);
+      this.cache.claude = {
+        records,
+        lastUpdate: new Date(),
+        key: nextKey,
+      };
+    }
+
+    return { records: this.cache.claude.records, dataDirectory };
+  }
+
+  private async loadCodexRecords(config: ExtensionConfig, forceReload: boolean): Promise<ClaudeUsageRecord[]> {
+    const nextKey = this.getCodexCacheKey(config);
+    if (!config.codexEnabled) {
+      this.cache.codex = {
+        records: [],
+        lastUpdate: new Date(),
+        key: nextKey,
+      };
+      return [];
+    }
+
+    if (this.shouldReload(this.cache.codex, nextKey, forceReload)) {
+      const records = await CodexDataLoader.loadRecords(config, true);
+      this.cache.codex = {
+        records,
+        lastUpdate: new Date(),
+        key: nextKey,
+      };
+    }
+
+    return this.cache.codex.records;
+  }
+
+  private async refreshData(forceReload = false): Promise<void> {
     try {
       this.statusBar.setLoading(true);
       this.webviewProvider.setLoading(true);
 
       const config = this.getConfiguration();
-      
-      // Find Claude data directory
-      const dataDirectory = await ClaudeDataLoader.findClaudeDataDirectory(
-        config.dataDirectory || undefined
+      const [claudeResult, codexRecords] = await Promise.all([
+        this.loadClaudeRecords(config, forceReload),
+        this.loadCodexRecords(config, forceReload),
+      ]);
+
+      const claudeRecords = claudeResult.records;
+      const mergedRecords = [...claudeRecords, ...codexRecords].sort(
+        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
       );
 
-      if (!dataDirectory) {
-        const error = 'Claude data directory not found. Please check your configuration.';
-        this.statusBar.updateUsageData(null, error);
-        this.webviewProvider.updateData(null, null, null, null, [], [], [], error, null);
+      const claudeTodayData = ClaudeDataLoader.getTodayData(claudeRecords);
+      const codexTodayData = ClaudeDataLoader.getTodayData(codexRecords);
+
+      const sessionData = ClaudeDataLoader.getCurrentSessionData(mergedRecords);
+      const todayData = ClaudeDataLoader.getTodayData(mergedRecords);
+      const monthData = ClaudeDataLoader.getThisMonthData(mergedRecords);
+      const allTimeData = ClaudeDataLoader.getAllTimeData(mergedRecords);
+      const dailyDataForMonth = ClaudeDataLoader.getDailyDataForMonth(mergedRecords);
+      const dailyDataForAllTime = ClaudeDataLoader.getDailyDataForAllTime(mergedRecords);
+      const hourlyDataForToday = ClaudeDataLoader.getHourlyDataForToday(mergedRecords);
+
+      if (mergedRecords.length === 0) {
+        this.statusBar.updateUsageData(
+          claudeTodayData,
+          config.codexEnabled ? codexTodayData : null,
+          'No usage records found. Make sure Claude Code or Codex is generating logs.',
+        );
+        this.webviewProvider.updateData(
+          null,
+          null,
+          null,
+          null,
+          [],
+          [],
+          [],
+          'No usage records found. Make sure Claude Code or Codex is generating logs.',
+          claudeResult.dataDirectory,
+          [],
+        );
         return;
       }
 
-      // Check if we need to reload data
-      const shouldReload = this.shouldReloadData(dataDirectory);
-      
-      let records = this.cache.records;
-      if (shouldReload) {
-        records = await ClaudeDataLoader.loadUsageRecords(dataDirectory);
-        this.cache.records = records;
-        this.cache.lastUpdate = new Date();
-        this.cache.dataDirectory = dataDirectory;
-      }
+      this.statusBar.updateUsageData(
+        claudeTodayData,
+        config.codexEnabled ? codexTodayData : null,
+      );
 
-      if (records.length === 0) {
-        const error = 'No usage records found. Make sure Claude Code is running.';
-        this.statusBar.updateUsageData(null, error);
-        this.webviewProvider.updateData(null, null, null, null, [], [], [], error, dataDirectory);
-        return;
-      }
-
-      // Calculate usage data
-      const sessionData = ClaudeDataLoader.getCurrentSessionData(records);
-      const todayData = ClaudeDataLoader.getTodayData(records);
-      const monthData = ClaudeDataLoader.getThisMonthData(records);
-      const allTimeData = ClaudeDataLoader.getAllTimeData(records);
-      const dailyDataForMonth = ClaudeDataLoader.getDailyDataForMonth(records);
-      const dailyDataForAllTime = ClaudeDataLoader.getDailyDataForAllTime(records);
-      const hourlyDataForToday = ClaudeDataLoader.getHourlyDataForToday(records);
-
-      // Update UI
-      this.statusBar.updateUsageData(todayData);
-      this.webviewProvider.updateData(sessionData, todayData, monthData, allTimeData, dailyDataForMonth, dailyDataForAllTime, hourlyDataForToday, undefined, dataDirectory, records);
-
+      this.webviewProvider.updateData(
+        sessionData,
+        todayData,
+        monthData,
+        allTimeData,
+        dailyDataForMonth,
+        dailyDataForAllTime,
+        hourlyDataForToday,
+        undefined,
+        claudeResult.dataDirectory,
+        mergedRecords,
+      );
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
-      console.error('Error refreshing Claude Code usage data:', error);
-      
-      this.statusBar.updateUsageData(null, errorMessage);
-      this.webviewProvider.updateData(null, null, null, null, [], [], [], errorMessage, null);
+      this.statusBar.updateUsageData(null, null, errorMessage);
+      this.webviewProvider.updateData(
+        null,
+        null,
+        null,
+        null,
+        [],
+        [],
+        [],
+        errorMessage,
+        null,
+        [],
+      );
     }
-  }
-
-  private shouldReloadData(dataDirectory: string): boolean {
-    // Always reload if directory changed
-    if (this.cache.dataDirectory !== dataDirectory) {
-      return true;
-    }
-
-    // Reload if cache is older than 1 minute
-    const cacheAge = Date.now() - this.cache.lastUpdate.getTime();
-    return cacheAge > 60000;
   }
 
   dispose(): void {
     if (this.refreshTimer) {
       clearInterval(this.refreshTimer);
     }
-    
+
     this.statusBar.dispose();
     this.webviewProvider.dispose();
   }
 }
 
 export async function activate(context: vscode.ExtensionContext) {
-  console.log('Claude Code Usage extension is now active');
-
-  // Load bundled pricing snapshot and kick off the background refresh before
-  // we start computing costs. initPricing resolves immediately after loading
-  // any cached overlay; the network fetch runs detached.
   await initPricing(context);
-
   const extension = new ClaudeCodeUsageExtension(context);
   context.subscriptions.push({
-    dispose: () => extension.dispose()
+    dispose: () => extension.dispose(),
   });
 }
 
 export function deactivate() {
-  console.log('Claude Code Usage extension is now deactivated');
+  // no-op
 }

@@ -8,6 +8,14 @@
 
 A comprehensive VSCode extension that monitors Claude Code usage and costs with detailed analytics and interactive visualizations.
 
+## What's New in v2.1
+
+- Added Codex session tracking (`~/.codex/sessions/**/*.jsonl`) with optional archived session scan.
+- Added provider filter pills in the webview: `Overview | Claude | Codex`.
+- Added Overview dashboard metrics (heatmap, streaks, sessions, active days, favorite model).
+- Status bar now supports dual-provider format: `$(pulse) $Claude / $(zap) $Codex`.
+- Added reasoning-token accounting for Codex and list-price equivalent footnotes across UI.
+
 ## 🖼️ Screenshot
 
 ### Status Bar
@@ -23,6 +31,7 @@ A comprehensive VSCode extension that monitors Claude Code usage and costs with 
 ### 📊 Real-time Monitoring
 
 - **Status Bar Display**: Shows today's usage costs in the VSCode status bar
+- **Codex Support**: Optionally merges Codex usage into the same dashboard and status bar
 - **Live Updates**: Automatic data refresh with configurable intervals (minimum 30 seconds)
 - **Zero Dependencies**: Built with native Node.js modules for maximum compatibility
 
@@ -77,11 +86,18 @@ This community fork is distributed via [GitHub Releases](https://github.com/huan
 
 Access settings via `File > Preferences > Settings` and search for "Claude Code Usage":
 
-- **Refresh Interval**: How often to update usage data (minimum 30 seconds)
-- **Data Directory**: Custom Claude data directory path (leave empty for auto-detection)
-- **Language**: Display language preference
-- **Decimal Places**: Number of decimal places for cost display
-- **Pricing Offline Mode** (v2.0): If true, skip the background LiteLLM fetch and only use the pricing snapshot bundled with the installed extension. Useful for air-gapped environments.
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `claudeCodeUsage.refreshInterval` | number | `60` | How often to refresh usage data (minimum 30s). |
+| `claudeCodeUsage.dataDirectory` | string | `\"\"` | Custom Claude data directory. |
+| `claudeCodeUsage.codex.enabled` | boolean | `true` | Enables Codex scanning and Codex UI surfaces. |
+| `claudeCodeUsage.codex.includeArchived` | boolean | `false` | Also scans `<codex-home>/archived_sessions/**/*.jsonl`. |
+| `claudeCodeUsage.codex.dataDirectory` | string | `\"\"` | Overrides `CODEX_HOME` and `~/.codex`. |
+| `claudeCodeUsage.language` | string | `auto` | UI language selection. |
+| `claudeCodeUsage.decimalPlaces` | number | `2` | Decimal precision for cost display. |
+| `claudeCodeUsage.pricingOfflineMode` | boolean | `false` | Uses bundled pricing snapshot only (no runtime fetch). |
+
+Cost display note: all costs are **list-price equivalent** based on official model pricing (OpenAI / Anthropic). Proxy billing plans (for example Packycode/Azure pass-through contracts) are not detected.
 
 ## 🚀 Usage
 

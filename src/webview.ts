@@ -1,6 +1,7 @@
 import * as vscode from 'vscode';
+import { ClaudeDataLoader } from './dataLoader';
 import { I18n } from './i18n';
-import { SessionData, UsageData } from './types';
+import { ClaudeUsageRecord, SessionData, UsageData } from './types';
 
 export class UsageWebviewProvider {
   private panel: vscode.WebviewPanel | undefined;
@@ -15,10 +16,13 @@ export class UsageWebviewProvider {
   private error: string | null = null;
   private dataDirectory: string | null = null;
   private currentTab: string = 'today';
+  private providerTab: 'claude' | 'codex' = 'claude';
   private hourlyDataCache: Map<string, { hour: string; data: UsageData }[]> = new Map();
-  private allRecords: any[] = [];
+  private allRecords: ClaudeUsageRecord[] = [];
 
-  constructor(private context: vscode.ExtensionContext) {}
+  constructor(private context: vscode.ExtensionContext) {
+    this.providerTab = this.context.workspaceState.get<'claude' | 'codex'>('claudeCodeUsage.providerTab', 'claude');
+  }
 
   private escapeHtml(text: string): string {
     return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
@@ -50,12 +54,18 @@ export class UsageWebviewProvider {
         case 'tabChanged':
           this.currentTab = message.tab;
           break;
+        case 'providerChanged':
+          if (message.provider === 'claude' || message.provider === 'codex') {
+            this.providerTab = message.provider;
+            await this.context.workspaceState.update('claudeCodeUsage.providerTab', this.providerTab);
+            this.updateWebview();
+          }
+          break;
         case 'getHourlyData':
           const dateString = message.date;
           if (dateString && this.panel) {
             // Get hourly data for the specified date
-            const { ClaudeDataLoader } = await import('./dataLoader');
-            const hourlyData = ClaudeDataLoader.getHourlyDataForDate(this.allRecords, dateString);
+            const hourlyData = ClaudeDataLoader.getHourlyDataForDate(this.getProviderRecords(), dateString);
 
             // Send data back to webview
             this.panel.webview.postMessage({
@@ -69,8 +79,7 @@ export class UsageWebviewProvider {
           const monthString = message.month;
           if (monthString && this.panel) {
             // Get daily data for the specified month
-            const { ClaudeDataLoader } = await import('./dataLoader');
-            const dailyData = ClaudeDataLoader.getDailyDataForSpecificMonth(this.allRecords, monthString);
+            const dailyData = ClaudeDataLoader.getDailyDataForSpecificMonth(this.getProviderRecords(), monthString);
 
             // Send data back to webview
             this.panel.webview.postMessage({
@@ -139,7 +148,7 @@ export class UsageWebviewProvider {
       return this.getErrorContent();
     }
 
-    if (!this.currentSessionData && !this.todayData && !this.monthData) {
+    if (this.getProviderRecords().length === 0) {
       return this.getNoDataContent();
     }
 
@@ -231,6 +240,8 @@ export class UsageWebviewProvider {
     const todayActive = this.currentTab === 'today' ? 'active' : '';
     const monthActive = this.currentTab === 'month' ? 'active' : '';
     const allActive = this.currentTab === 'all' ? 'active' : '';
+    const claudeProviderActive = this.providerTab === 'claude' ? 'active' : '';
+    const codexProviderActive = this.providerTab === 'codex' ? 'active' : '';
 
     return (
       `
@@ -280,6 +291,19 @@ export class UsageWebviewProvider {
       `</button>
           </div>
 
+          <div class="provider-tabs">
+            <button id="provider-claude" class="provider-tab ` +
+      claudeProviderActive +
+      `" onclick="showProvider('claude')">` +
+      I18n.t.provider.pill.claude +
+      `</button>
+            <button id="provider-codex" class="provider-tab ` +
+      codexProviderActive +
+      `" onclick="showProvider('codex')">` +
+      I18n.t.provider.pill.codex +
+      `</button>
+          </div>
+
           <div id="today" class="tab-content ` +
       todayActive +
       `">
@@ -313,15 +337,44 @@ export class UsageWebviewProvider {
     );
   }
 
+  private getProviderRecords(): ClaudeUsageRecord[] {
+    return this.allRecords.filter((record) => {
+      const provider = record.provider === 'codex' ? 'codex' : 'claude';
+      return provider === this.providerTab;
+    });
+  }
+
+  private getProviderDataset(): {
+    sessionData: SessionData | null;
+    todayData: UsageData;
+    monthData: UsageData;
+    allTimeData: UsageData;
+    dailyDataForMonth: { date: string; data: UsageData }[];
+    dailyDataForAllTime: { date: string; data: UsageData }[];
+    hourlyDataForToday: { hour: string; data: UsageData }[];
+  } {
+    const records = this.getProviderRecords();
+    return {
+      sessionData: ClaudeDataLoader.getCurrentSessionData(records),
+      todayData: ClaudeDataLoader.getTodayData(records),
+      monthData: ClaudeDataLoader.getThisMonthData(records),
+      allTimeData: ClaudeDataLoader.getAllTimeData(records),
+      dailyDataForMonth: ClaudeDataLoader.getDailyDataForMonth(records),
+      dailyDataForAllTime: ClaudeDataLoader.getDailyDataForAllTime(records),
+      hourlyDataForToday: ClaudeDataLoader.getHourlyDataForToday(records),
+    };
+  }
+
   private renderTodayData(): string {
-    if (!this.todayData) {
+    const providerData = this.getProviderDataset();
+    if (!providerData.todayData || providerData.todayData.messageCount === 0) {
       return '<div class="no-data"><p>' + I18n.t.popup.noDataMessage + '</p></div>';
     }
 
-    const todaySummary = this.renderUsageData(this.todayData);
+    const todaySummary = this.renderUsageData(providerData.todayData);
 
     let hourlyBreakdown = '';
-    if (this.hourlyDataForToday.length > 0) {
+    if (providerData.hourlyDataForToday.length > 0) {
       const cost = I18n.t.popup.cost;
       const inputTokens = I18n.t.popup.inputTokens;
       const outputTokens = I18n.t.popup.outputTokens;
@@ -330,7 +383,7 @@ export class UsageWebviewProvider {
       const messages = I18n.t.popup.messages;
 
       let hourlyRows = '';
-      this.hourlyDataForToday.forEach(({ hour, data }) => {
+      providerData.hourlyDataForToday.forEach(({ hour, data }) => {
         hourlyRows +=
           '<tr>' +
           '<td class="date-cell">' +
@@ -384,7 +437,7 @@ export class UsageWebviewProvider {
         '</div>' +
         '<div class="chart-container">' +
         '<div class="chart-content" id="hourlyChart">' +
-        this.renderHourlyChart() +
+        this.renderHourlyChart(providerData.hourlyDataForToday) +
         '</div>' +
         '</div>' +
         '<div class="daily-table-container">' +
@@ -541,14 +594,15 @@ export class UsageWebviewProvider {
   }
 
   private renderMonthData(): string {
-    if (!this.monthData) {
+    const providerData = this.getProviderDataset();
+    if (!providerData.monthData || providerData.monthData.messageCount === 0) {
       return `<div class="no-data"><p>${I18n.t.popup.noDataMessage}</p></div>`;
     }
 
-    const monthSummary = this.renderUsageData(this.monthData);
+    const monthSummary = this.renderUsageData(providerData.monthData);
 
     const dailyBreakdown =
-      this.dailyDataForMonth.length > 0
+      providerData.dailyDataForMonth.length > 0
         ? `
       <div class="daily-breakdown">
         <h3>${I18n.t.popup.dailyBreakdown}</h3>
@@ -566,7 +620,7 @@ export class UsageWebviewProvider {
         <!-- Chart Container -->
         <div class="chart-container">
           <div class="chart-content" id="dailyChart">
-            ${this.renderDailyChart()}
+            ${this.renderDailyChart(providerData.dailyDataForMonth)}
           </div>
         </div>
 
@@ -585,7 +639,7 @@ export class UsageWebviewProvider {
               </tr>
             </thead>
             <tbody>
-              ${this.dailyDataForMonth
+              ${providerData.dailyDataForMonth
                 .map(
                   ({ date, data }) => `
                 <tr class="daily-row" data-date="${date}">
@@ -625,14 +679,15 @@ export class UsageWebviewProvider {
   }
 
   private renderAllTimeData(): string {
-    if (!this.allTimeData) {
+    const providerData = this.getProviderDataset();
+    if (!providerData.allTimeData || providerData.allTimeData.messageCount === 0) {
       return `<div class="no-data"><p>${I18n.t.popup.noDataMessage}</p></div>`;
     }
 
-    const allTimeSummary = this.renderUsageData(this.allTimeData);
+    const allTimeSummary = this.renderUsageData(providerData.allTimeData);
 
     const dailyBreakdown =
-      this.dailyDataForAllTime.length > 0
+      providerData.dailyDataForAllTime.length > 0
         ? `
       <div class="daily-breakdown">
         <h3>${I18n.t.popup.monthlyBreakdown}</h3>
@@ -650,7 +705,7 @@ export class UsageWebviewProvider {
         <!-- Chart Container -->
         <div class="chart-container">
           <div class="chart-content" id="allTimeChart">
-            ${this.renderAllTimeChart()}
+            ${this.renderAllTimeChart(providerData.dailyDataForAllTime)}
           </div>
         </div>
 
@@ -669,7 +724,7 @@ export class UsageWebviewProvider {
               </tr>
             </thead>
             <tbody>
-              ${this.dailyDataForAllTime
+              ${providerData.dailyDataForAllTime
                 .map(
                   ({ date, data }) => `
                 <tr class="daily-row" data-date="${date}">
@@ -708,13 +763,13 @@ export class UsageWebviewProvider {
     return allTimeSummary + dailyBreakdown;
   }
 
-  private renderDailyChart(): string {
-    if (this.dailyDataForMonth.length === 0) {
+  private renderDailyChart(dailyDataForMonth: { date: string; data: UsageData }[]): string {
+    if (dailyDataForMonth.length === 0) {
       return '<div class="no-chart-data">No data available</div>';
     }
 
     // Sort data by date (oldest first for chart display)
-    const sortedData = [...this.dailyDataForMonth].sort((a, b) => a.date.localeCompare(b.date));
+    const sortedData = [...dailyDataForMonth].sort((a, b) => a.date.localeCompare(b.date));
 
     // Generate chart bars for cost (default metric)
     const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
@@ -746,13 +801,13 @@ export class UsageWebviewProvider {
     `;
   }
 
-  private renderAllTimeChart(): string {
-    if (this.dailyDataForAllTime.length === 0) {
+  private renderAllTimeChart(dailyDataForAllTime: { date: string; data: UsageData }[]): string {
+    if (dailyDataForAllTime.length === 0) {
       return '<div class="no-chart-data">No data available</div>';
     }
 
     // Sort data by date (oldest first for chart display)
-    const sortedData = [...this.dailyDataForAllTime].sort((a, b) => a.date.localeCompare(b.date));
+    const sortedData = [...dailyDataForAllTime].sort((a, b) => a.date.localeCompare(b.date));
 
     // Generate chart bars for cost (default metric)
     const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
@@ -784,13 +839,13 @@ export class UsageWebviewProvider {
     `;
   }
 
-  private renderHourlyChart(): string {
-    if (this.hourlyDataForToday.length === 0) {
+  private renderHourlyChart(hourlyDataForToday: { hour: string; data: UsageData }[]): string {
+    if (hourlyDataForToday.length === 0) {
       return '<div class="no-chart-data">No data available</div>';
     }
 
     // Sort data by hour (chronological order)
-    const sortedData = [...this.hourlyDataForToday].sort((a, b) => a.hour.localeCompare(b.hour));
+    const sortedData = [...hourlyDataForToday].sort((a, b) => a.hour.localeCompare(b.hour));
 
     // Generate chart bars for cost (default metric)
     const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
@@ -930,6 +985,31 @@ export class UsageWebviewProvider {
 
       .tab-content.active {
         display: block;
+      }
+
+      .provider-tabs {
+        display: inline-flex;
+        margin-bottom: 16px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .provider-tab {
+        background: transparent;
+        border: none;
+        border-right: 1px solid var(--vscode-panel-border);
+        padding: 6px 14px;
+        cursor: pointer;
+      }
+
+      .provider-tab:last-child {
+        border-right: none;
+      }
+
+      .provider-tab.active {
+        background: var(--vscode-button-background);
+        color: var(--vscode-button-foreground);
       }
 
       .usage-summary {
@@ -1318,6 +1398,22 @@ function showTab(tabName) {
   }
 }
 
+function showProvider(providerName) {
+  console.log("[DEBUG] showProvider called:", providerName);
+  try {
+    document.querySelectorAll('.provider-tab').forEach(tab => tab.classList.remove('active'));
+    const selected = document.getElementById('provider-' + providerName);
+    if (selected) {
+      selected.classList.add('active');
+      vscode.postMessage({ command: 'providerChanged', provider: providerName });
+    } else {
+      console.error("[DEBUG] Provider tab not found:", providerName);
+    }
+  } catch (error) {
+    console.error("[DEBUG] Error switching provider:", error);
+  }
+}
+
 function toggleHourlyDetail(date) {
   console.log("[DEBUG] toggleHourlyDetail called for date:", date);
 
@@ -1532,6 +1628,7 @@ function syncChartBarSelection(date, isSelected) {
 window.refresh = refresh;
 window.openSettings = openSettings;
 window.showTab = showTab;
+window.showProvider = showProvider;
 window.toggleHourlyDetail = toggleHourlyDetail;
 window.toggleMonthlyDetail = toggleMonthlyDetail;
 window.updateHourlyChart = updateHourlyChart;
