@@ -2,7 +2,7 @@
   "name": "claude-code-usage-community",
   "displayName": "Claude Code Usage (Community)",
   "description": "Monitor Claude Code usage and costs in VSCode status bar (community-maintained fork)",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "publisher": "huanglune",
   "author": "huangliang",
   "license": "MIT",
