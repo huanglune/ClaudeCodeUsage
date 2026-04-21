@@ -1,31 +1,31 @@
 import * as vscode from 'vscode';
 import { ClaudeDataLoader } from './dataLoader';
 import { I18n } from './i18n';
-import { ClaudeUsageRecord, SessionData, UsageData } from './types';
+import {
+  ClaudeUsageRecord,
+  DashboardPayload,
+  HostToWebviewMessage,
+} from './types';
+
+type Provider = 'claude' | 'codex';
+type PeriodTab = 'today' | 'month' | 'all';
 
 export class UsageWebviewProvider {
   private panel: vscode.WebviewPanel | undefined;
-  private currentSessionData: SessionData | null = null;
-  private todayData: UsageData | null = null;
-  private monthData: UsageData | null = null;
-  private allTimeData: UsageData | null = null;
-  private dailyDataForMonth: { date: string; data: UsageData }[] = [];
-  private dailyDataForAllTime: { date: string; data: UsageData }[] = [];
-  private hourlyDataForToday: { hour: string; data: UsageData }[] = [];
-  private isLoading: boolean = false;
-  private error: string | null = null;
-  private dataDirectory: string | null = null;
-  private currentTab: string = 'today';
-  private providerTab: 'claude' | 'codex' = 'claude';
-  private hourlyDataCache: Map<string, { hour: string; data: UsageData }[]> = new Map();
-  private allRecords: ClaudeUsageRecord[] = [];
+  private isLoading = false;
+  private lastPayload: DashboardPayload | null = null;
+  private currentTab: PeriodTab = 'today';
+  private providerTab: Provider = 'claude';
+  private providerRecords: Record<Provider, ClaudeUsageRecord[]> = {
+    claude: [],
+    codex: [],
+  };
 
   constructor(private context: vscode.ExtensionContext) {
-    this.providerTab = this.context.workspaceState.get<'claude' | 'codex'>('claudeCodeUsage.providerTab', 'claude');
-  }
-
-  private escapeHtml(text: string): string {
-    return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    this.providerTab = this.context.workspaceState.get<Provider>(
+      'claudeCodeUsage.providerTab',
+      'claude',
+    );
   }
 
   show(): void {
@@ -34,871 +34,243 @@ export class UsageWebviewProvider {
       return;
     }
 
-    this.panel = vscode.window.createWebviewPanel('claudeCodeUsage', I18n.t.popup.title, vscode.ViewColumn.One, {
-      enableScripts: true,
-      retainContextWhenHidden: true,
-    });
+    this.panel = vscode.window.createWebviewPanel(
+      'claudeCodeUsage',
+      I18n.t.popup.title,
+      vscode.ViewColumn.One,
+      {
+        enableScripts: true,
+        retainContextWhenHidden: true,
+      },
+    );
 
     this.panel.onDidDispose(() => {
       this.panel = undefined;
     });
 
-    this.panel.webview.onDidReceiveMessage(async (message) => {
-      switch (message.command) {
-        case 'refresh':
-          vscode.commands.executeCommand('claudeCodeUsage.refresh');
-          break;
-        case 'openSettings':
-          vscode.commands.executeCommand('claudeCodeUsage.openSettings');
-          break;
-        case 'tabChanged':
-          this.currentTab = message.tab;
-          break;
-        case 'providerChanged':
-          if (message.provider === 'claude' || message.provider === 'codex') {
-            this.providerTab = message.provider;
-            await this.context.workspaceState.update('claudeCodeUsage.providerTab', this.providerTab);
-            this.updateWebview();
-          }
-          break;
-        case 'getHourlyData':
-          const dateString = message.date;
-          if (dateString && this.panel) {
-            // Get hourly data for the specified date
-            const hourlyData = ClaudeDataLoader.getHourlyDataForDate(this.getProviderRecords(), dateString);
-
-            // Send data back to webview
-            this.panel.webview.postMessage({
-              command: 'hourlyDataResponse',
-              date: dateString,
-              data: hourlyData,
-            });
-          }
-          break;
-        case 'getDailyData':
-          const monthString = message.month;
-          if (monthString && this.panel) {
-            // Get daily data for the specified month
-            const dailyData = ClaudeDataLoader.getDailyDataForSpecificMonth(this.getProviderRecords(), monthString);
-
-            // Send data back to webview
-            this.panel.webview.postMessage({
-              command: 'dailyDataResponse',
-              month: monthString,
-              data: dailyData,
-            });
-          }
-          break;
-      }
+    this.panel.webview.onDidReceiveMessage((message: any) => {
+      this.handleWebviewMessage(message);
     });
 
-    this.updateWebview();
+    this.panel.webview.html = this.buildSkeletonHtml();
+    this.syncWebviewState();
   }
 
-  updateData(
-    sessionData: SessionData | null,
-    todayData: UsageData | null,
-    monthData: UsageData | null,
-    allTimeData: UsageData | null,
-    dailyDataForMonth: { date: string; data: UsageData }[] = [],
-    dailyDataForAllTime: { date: string; data: UsageData }[] = [],
-    hourlyDataForToday: { hour: string; data: UsageData }[] = [],
-    error?: string,
-    dataDirectory?: string | null,
-    allRecords?: any[]
-  ): void {
-    this.currentSessionData = sessionData;
-    this.todayData = todayData;
-    this.monthData = monthData;
-    this.allTimeData = allTimeData;
-    this.dailyDataForMonth = dailyDataForMonth;
-    this.dailyDataForAllTime = dailyDataForAllTime;
-    this.hourlyDataForToday = hourlyDataForToday;
-    this.error = error || null;
-    this.dataDirectory = dataDirectory || null;
-    this.isLoading = false;
-    if (allRecords) {
-      this.allRecords = allRecords;
+  handleLanguageChanged(): void {
+    if (!this.panel) {
+      return;
     }
 
-    if (this.panel) {
-      this.updateWebview();
+    const wasVisible = this.panel.visible;
+    this.panel.dispose();
+
+    if (wasVisible) {
+      this.show();
     }
+  }
+
+  setProviderRecords(claudeRecords: ClaudeUsageRecord[], codexRecords: ClaudeUsageRecord[]): void {
+    this.providerRecords = {
+      claude: claudeRecords,
+      codex: codexRecords,
+    };
+  }
+
+  updateData(payload: DashboardPayload): void {
+    this.lastPayload = payload;
+    this.postMessage({ command: 'updateData', payload });
   }
 
   setLoading(loading: boolean): void {
     this.isLoading = loading;
-    if (this.panel) {
-      this.updateWebview();
+    this.postMessage({ command: 'setLoading', loading });
+  }
+
+  private postMessage(message: HostToWebviewMessage): void {
+    if (!this.panel) {
+      return;
+    }
+    void this.panel.webview.postMessage(message);
+  }
+
+  private syncWebviewState(): void {
+    if (this.lastPayload) {
+      this.postMessage({ command: 'updateData', payload: this.lastPayload });
+    }
+    this.postMessage({ command: 'setLoading', loading: this.isLoading });
+  }
+
+  private handleWebviewMessage(message: any): void {
+    switch (message.command) {
+      case 'refresh':
+        void vscode.commands.executeCommand('claudeCodeUsage.refresh');
+        break;
+      case 'openSettings':
+        void vscode.commands.executeCommand('claudeCodeUsage.openSettings');
+        break;
+      case 'tabChanged': {
+        if (message.tab === 'today' || message.tab === 'month' || message.tab === 'all') {
+          this.currentTab = message.tab;
+        }
+        break;
+      }
+      case 'providerChanged': {
+        if (message.provider === 'claude' || message.provider === 'codex') {
+          this.providerTab = message.provider;
+          void this.context.workspaceState.update('claudeCodeUsage.providerTab', this.providerTab);
+        }
+        break;
+      }
+      case 'getHourlyData': {
+        const dateString = typeof message.date === 'string' ? message.date : '';
+        if (!dateString || !this.panel) {
+          return;
+        }
+
+        const hourlyData = ClaudeDataLoader.getHourlyDataForDate(
+          this.providerRecords[this.providerTab],
+          dateString,
+        );
+
+        void this.panel.webview.postMessage({
+          command: 'hourlyDataResponse',
+          date: dateString,
+          data: hourlyData,
+        });
+        break;
+      }
+      case 'getDailyData': {
+        const monthString = typeof message.month === 'string' ? message.month : '';
+        if (!monthString || !this.panel) {
+          return;
+        }
+
+        const dailyData = ClaudeDataLoader.getDailyDataForSpecificMonth(
+          this.providerRecords[this.providerTab],
+          monthString,
+        );
+
+        void this.panel.webview.postMessage({
+          command: 'dailyDataResponse',
+          month: monthString,
+          data: dailyData,
+        });
+        break;
+      }
+      case 'ready':
+        // Webview notifies when script is ready to receive messages.
+        // Re-sync latest state to avoid message-race issues during initial load.
+        this.syncWebviewState();
+        break;
+      default:
+        break;
     }
   }
 
-  private updateWebview(): void {
-    if (!this.panel) return;
+  private buildSkeletonHtml(): string {
+    const decimalPlaces = vscode.workspace
+      .getConfiguration('claudeCodeUsage')
+      .get<number>('decimalPlaces', 2);
 
-    this.panel.webview.html = this.getWebviewContent();
-  }
-
-  private getWebviewContent(): string {
-    if (this.isLoading) {
-      return this.getLoadingContent();
-    }
-
-    if (this.error) {
-      return this.getErrorContent();
-    }
-
-    if (this.getProviderRecords().length === 0) {
-      return this.getNoDataContent();
-    }
-
-    return this.getMainContent();
-  }
-
-  private getLoadingContent(): string {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-        <title>${I18n.t.popup.title}</title>
-        <style>${this.getStyles()}</style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="loading">
-            <div class="spinner"></div>
-            <p>${I18n.t.statusBar.loading}</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-  }
-
-  private getErrorContent(): string {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-        <title>${I18n.t.popup.title}</title>
-        <style>${this.getStyles()}</style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="error">
-            <h2>${I18n.t.statusBar.error}</h2>
-            <p>${this.error}</p>
-            <button onclick="refresh()">${I18n.t.popup.refresh}</button>
-          </div>
-        </div>
-        <script>${this.getScript()}</script>
-      </body>
-      </html>
-    `;
-  }
-
-  private getNoDataContent(): string {
-    return `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="UTF-8">
-        <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-        <title>${I18n.t.popup.title}</title>
-        <style>${this.getStyles()}</style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="no-data">
-            <h2>${I18n.t.statusBar.noData}</h2>
-            <p>${I18n.t.popup.noDataMessage}</p>
-            <div class="actions">
-              <button onclick="refresh()">${I18n.t.popup.refresh}</button>
-              <button onclick="openSettings()">${I18n.t.popup.settings}</button>
-            </div>
-          </div>
-        </div>
-        <script>${this.getScript()}</script>
-      </body>
-      </html>
-    `;
-  }
-
-  private getMainContent(): string {
-    // Pre-resolve I18n values to avoid template literal issues
-    const title = I18n.t.popup.title;
-    const refresh = I18n.t.popup.refresh;
-    const settings = I18n.t.popup.settings;
-    const today = I18n.t.popup.today;
-    const thisMonth = I18n.t.popup.thisMonth;
-    const allTime = I18n.t.popup.allTime;
+    const bootstrap = JSON.stringify({
+      t: I18n.t,
+      decimalPlaces,
+      language: I18n.getCurrentLanguage(),
+    }).replace(/</g, '\\u003c');
 
     const todayActive = this.currentTab === 'today' ? 'active' : '';
     const monthActive = this.currentTab === 'month' ? 'active' : '';
     const allActive = this.currentTab === 'all' ? 'active' : '';
-    const claudeProviderActive = this.providerTab === 'claude' ? 'active' : '';
-    const codexProviderActive = this.providerTab === 'codex' ? 'active' : '';
 
-    return (
-      `
+    return `
       <!DOCTYPE html>
-      <html>
+      <html lang="en">
       <head>
         <meta charset="UTF-8">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline';">
-        <title>` +
-      title +
-      `</title>
-        <style>` +
-      this.getStyles() +
-      `</style>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>${I18n.t.popup.title}</title>
+        <style>${this.getStyles()}</style>
       </head>
       <body>
         <div class="container">
           <header>
-            <h1>` +
-      title +
-      `</h1>
+            <h1>${I18n.t.popup.title}</h1>
             <div class="actions">
-              <button onclick="refresh()" class="btn-secondary">` +
-      refresh +
-      `</button>
-              <button onclick="openSettings()" class="btn-secondary">` +
-      settings +
-      `</button>
+              <button id="refresh-button" class="btn-secondary">${I18n.t.popup.refresh}</button>
+              <button id="settings-button" class="btn-secondary">${I18n.t.popup.settings}</button>
             </div>
           </header>
 
+          <div id="error-banner" class="error-banner" hidden></div>
+          <div id="no-data" class="no-data-state" hidden>
+            <h2>${I18n.t.statusBar.noData}</h2>
+            <p>${I18n.t.popup.noDataMessage}</p>
+          </div>
+
           <div class="tabs">
-            <button id="tab-today" class="tab ` +
-      todayActive +
-      `" onclick="showTab('today')">` +
-      today +
-      `</button>
-            <button id="tab-month" class="tab ` +
-      monthActive +
-      `" onclick="showTab('month')">` +
-      thisMonth +
-      `</button>
-            <button id="tab-all" class="tab ` +
-      allActive +
-      `" onclick="showTab('all')">` +
-      allTime +
-      `</button>
+            <button id="tab-today" class="tab ${todayActive}" data-tab="today">${I18n.t.popup.today}</button>
+            <button id="tab-month" class="tab ${monthActive}" data-tab="month">${I18n.t.popup.thisMonth}</button>
+            <button id="tab-all" class="tab ${allActive}" data-tab="all">${I18n.t.popup.allTime}</button>
           </div>
 
           <div class="provider-tabs">
-            <button id="provider-claude" class="provider-tab ` +
-      claudeProviderActive +
-      `" onclick="showProvider('claude')">` +
-      I18n.t.provider.pill.claude +
-      `</button>
-            <button id="provider-codex" class="provider-tab ` +
-      codexProviderActive +
-      `" onclick="showProvider('codex')">` +
-      I18n.t.provider.pill.codex +
-      `</button>
+            <button id="provider-claude" class="provider-tab ${this.providerTab === 'claude' ? 'active' : ''}" data-provider="claude">${I18n.t.provider.pill.claude}</button>
+            <button id="provider-codex" class="provider-tab ${this.providerTab === 'codex' ? 'active' : ''}" data-provider="codex">${I18n.t.provider.pill.codex}</button>
           </div>
 
-          <div id="today" class="tab-content ` +
-      todayActive +
-      `">
-            ` +
-      this.renderTodayData() +
-      `
-          </div>
+          ${this.buildTabContent('today', todayActive !== '')}
+          ${this.buildTabContent('month', monthActive !== '')}
+          ${this.buildTabContent('all', allActive !== '')}
+        </div>
 
-          <div id="month" class="tab-content ` +
-      monthActive +
-      `">
-            ` +
-      this.renderMonthData() +
-      `
-          </div>
-
-          <div id="all" class="tab-content ` +
-      allActive +
-      `">
-            ` +
-      this.renderAllTimeData() +
-      `
+        <div id="loading-overlay" class="loading-overlay" hidden>
+          <div class="loading-card">
+            <div class="spinner"></div>
+            <p>${I18n.t.statusBar.loading}</p>
           </div>
         </div>
-        <script>` +
-      this.getScript() +
-      `</script>
+
+        <script>
+          window.__i18n = ${bootstrap};
+          ${this.getScript()}
+        </script>
       </body>
       </html>
-    `
-    );
+    `;
   }
 
-  private getProviderRecords(): ClaudeUsageRecord[] {
-    return this.allRecords.filter((record) => {
-      const provider = record.provider === 'codex' ? 'codex' : 'claude';
-      return provider === this.providerTab;
-    });
+  private buildTabContent(period: PeriodTab, isActive: boolean): string {
+    return `
+      <section id="${period}" class="tab-content ${isActive ? 'active' : ''}" data-period="${period}">
+        ${this.buildProviderPanel(period, 'claude')}
+        ${this.buildProviderPanel(period, 'codex')}
+      </section>
+    `;
   }
 
-  private getProviderDataset(): {
-    sessionData: SessionData | null;
-    todayData: UsageData;
-    monthData: UsageData;
-    allTimeData: UsageData;
-    dailyDataForMonth: { date: string; data: UsageData }[];
-    dailyDataForAllTime: { date: string; data: UsageData }[];
-    hourlyDataForToday: { hour: string; data: UsageData }[];
-  } {
-    const records = this.getProviderRecords();
-    return {
-      sessionData: ClaudeDataLoader.getCurrentSessionData(records),
-      todayData: ClaudeDataLoader.getTodayData(records),
-      monthData: ClaudeDataLoader.getThisMonthData(records),
-      allTimeData: ClaudeDataLoader.getAllTimeData(records),
-      dailyDataForMonth: ClaudeDataLoader.getDailyDataForMonth(records),
-      dailyDataForAllTime: ClaudeDataLoader.getDailyDataForAllTime(records),
-      hourlyDataForToday: ClaudeDataLoader.getHourlyDataForToday(records),
-    };
-  }
+  private buildProviderPanel(period: PeriodTab, provider: Provider): string {
+    return `
+      <div class="provider-panel ${provider === this.providerTab ? 'active' : ''}" data-period="${period}" data-provider="${provider}">
+        <div class="panel-empty" data-slot="panel-empty" hidden>${I18n.t.popup.noDataMessage}</div>
 
-  private renderTodayData(): string {
-    const providerData = this.getProviderDataset();
-    if (!providerData.todayData || providerData.todayData.messageCount === 0) {
-      return '<div class="no-data"><p>' + I18n.t.popup.noDataMessage + '</p></div>';
-    }
+        <div class="summary-slot" data-slot="summary"></div>
 
-    const todaySummary = this.renderUsageData(providerData.todayData);
-
-    let hourlyBreakdown = '';
-    if (providerData.hourlyDataForToday.length > 0) {
-      const cost = I18n.t.popup.cost;
-      const inputTokens = I18n.t.popup.inputTokens;
-      const outputTokens = I18n.t.popup.outputTokens;
-      const cacheCreation = I18n.t.popup.cacheCreation;
-      const cacheRead = I18n.t.popup.cacheRead;
-      const messages = I18n.t.popup.messages;
-
-      let hourlyRows = '';
-      providerData.hourlyDataForToday.forEach(({ hour, data }) => {
-        hourlyRows +=
-          '<tr>' +
-          '<td class="date-cell">' +
-          hour +
-          '</td>' +
-          '<td class="cost-cell">' +
-          I18n.formatCurrency(data.totalCost) +
-          '</td>' +
-          '<td class="number-cell">' +
-          I18n.formatNumber(data.totalInputTokens) +
-          '</td>' +
-          '<td class="number-cell">' +
-          I18n.formatNumber(data.totalOutputTokens) +
-          '</td>' +
-          '<td class="number-cell">' +
-          I18n.formatNumber(data.totalCacheCreationTokens) +
-          '</td>' +
-          '<td class="number-cell">' +
-          I18n.formatNumber(data.totalCacheReadTokens) +
-          '</td>' +
-          '<td class="number-cell">' +
-          I18n.formatNumber(data.messageCount) +
-          '</td>' +
-          '</tr>';
-      });
-
-      hourlyBreakdown =
-        '<div class="daily-breakdown">' +
-        '<h3>' +
-        I18n.t.popup.hourlyBreakdown +
-        '</h3>' +
-        '<div class="chart-tabs">' +
-        '<button class="chart-tab active" data-metric="cost">' +
-        cost +
-        '</button>' +
-        '<button class="chart-tab" data-metric="inputTokens">' +
-        inputTokens +
-        '</button>' +
-        '<button class="chart-tab" data-metric="outputTokens">' +
-        outputTokens +
-        '</button>' +
-        '<button class="chart-tab" data-metric="cacheCreation">' +
-        cacheCreation +
-        '</button>' +
-        '<button class="chart-tab" data-metric="cacheRead">' +
-        cacheRead +
-        '</button>' +
-        '<button class="chart-tab" data-metric="messages">' +
-        messages +
-        '</button>' +
-        '</div>' +
-        '<div class="chart-container">' +
-        '<div class="chart-content" id="hourlyChart">' +
-        this.renderHourlyChart(providerData.hourlyDataForToday) +
-        '</div>' +
-        '</div>' +
-        '<div class="daily-table-container">' +
-        '<table class="daily-table">' +
-        '<thead>' +
-        '<tr>' +
-        '<th>時間</th>' +
-        '<th>' +
-        cost +
-        '</th>' +
-        '<th>' +
-        inputTokens +
-        '</th>' +
-        '<th>' +
-        outputTokens +
-        '</th>' +
-        '<th>' +
-        cacheCreation +
-        '</th>' +
-        '<th>' +
-        cacheRead +
-        '</th>' +
-        '<th>' +
-        messages +
-        '</th>' +
-        '</tr>' +
-        '</thead>' +
-        '<tbody>' +
-        hourlyRows +
-        '</tbody>' +
-        '</table>' +
-        '</div>' +
-        '</div>';
-    }
-
-    return todaySummary + hourlyBreakdown;
-  }
-
-  private renderUsageData(data: UsageData | null): string {
-    if (!data) {
-      return '<div class="no-data"><p>' + I18n.t.popup.noDataMessage + '</p></div>';
-    }
-
-    const cost = I18n.t.popup.cost;
-    const messages = I18n.t.popup.messages;
-    const inputTokens = I18n.t.popup.inputTokens;
-    const outputTokens = I18n.t.popup.outputTokens;
-    const cacheCreation = I18n.t.popup.cacheCreation;
-    const cacheRead = I18n.t.popup.cacheRead;
-    const modelBreakdown = I18n.t.popup.modelBreakdown;
-
-    let html =
-      '<div class="usage-summary">' +
-      '<div class="summary-grid">' +
-      '<div class="summary-item">' +
-      '<div class="label">' +
-      cost +
-      '</div>' +
-      '<div class="value cost">' +
-      I18n.formatCurrency(data.totalCost) +
-      '</div>' +
-      '</div>' +
-      '<div class="summary-item">' +
-      '<div class="label">' +
-      messages +
-      '</div>' +
-      '<div class="value">' +
-      I18n.formatNumber(data.messageCount) +
-      '</div>' +
-      '</div>' +
-      '<div class="summary-item">' +
-      '<div class="label">' +
-      inputTokens +
-      '</div>' +
-      '<div class="value">' +
-      I18n.formatNumber(data.totalInputTokens) +
-      '</div>' +
-      '</div>' +
-      '<div class="summary-item">' +
-      '<div class="label">' +
-      outputTokens +
-      '</div>' +
-      '<div class="value">' +
-      I18n.formatNumber(data.totalOutputTokens) +
-      '</div>' +
-      '</div>' +
-      '<div class="summary-item">' +
-      '<div class="label">' +
-      cacheCreation +
-      '</div>' +
-      '<div class="value">' +
-      I18n.formatNumber(data.totalCacheCreationTokens) +
-      '</div>' +
-      '</div>' +
-      '<div class="summary-item">' +
-      '<div class="label">' +
-      cacheRead +
-      '</div>' +
-      '<div class="value">' +
-      I18n.formatNumber(data.totalCacheReadTokens) +
-      '</div>' +
-      '</div>' +
-      '</div>' +
-      '</div>';
-
-    if (Object.keys(data.modelBreakdown).length > 0) {
-      html += '<div class="model-breakdown">' + '<h3>' + modelBreakdown + '</h3>' + '<div class="model-list">';
-
-      Object.entries(data.modelBreakdown).forEach(([model, modelData]) => {
-        html +=
-          '<div class="model-item">' +
-          '<div class="model-header">' +
-          '<span class="model-name">' +
-          this.escapeHtml(model) +
-          '</span>' +
-          '<span class="model-cost">' +
-          I18n.formatCurrency(modelData.cost) +
-          '</span>' +
-          '</div>' +
-          '<div class="model-details">' +
-          '<span>' +
-          inputTokens +
-          ': ' +
-          I18n.formatNumber(modelData.inputTokens) +
-          '</span>' +
-          '<span>' +
-          outputTokens +
-          ': ' +
-          I18n.formatNumber(modelData.outputTokens) +
-          '</span>' +
-          '<span>' +
-          cacheCreation +
-          ': ' +
-          I18n.formatNumber(modelData.cacheCreationTokens) +
-          '</span>' +
-          '<span>' +
-          cacheRead +
-          ': ' +
-          I18n.formatNumber(modelData.cacheReadTokens) +
-          '</span>' +
-          '<span>' +
-          messages +
-          ': ' +
-          I18n.formatNumber(modelData.count) +
-          '</span>' +
-          '</div>' +
-          '</div>';
-      });
-
-      html += '</div></div>';
-    }
-
-    return html;
-  }
-
-  private renderMonthData(): string {
-    const providerData = this.getProviderDataset();
-    if (!providerData.monthData || providerData.monthData.messageCount === 0) {
-      return `<div class="no-data"><p>${I18n.t.popup.noDataMessage}</p></div>`;
-    }
-
-    const monthSummary = this.renderUsageData(providerData.monthData);
-
-    const dailyBreakdown =
-      providerData.dailyDataForMonth.length > 0
-        ? `
-      <div class="daily-breakdown">
-        <h3>${I18n.t.popup.dailyBreakdown}</h3>
-
-        <!-- Chart Tabs -->
-        <div class="chart-tabs">
-          <button class="chart-tab active" data-metric="cost">${I18n.t.popup.cost}</button>
-          <button class="chart-tab" data-metric="inputTokens">${I18n.t.popup.inputTokens}</button>
-          <button class="chart-tab" data-metric="outputTokens">${I18n.t.popup.outputTokens}</button>
-          <button class="chart-tab" data-metric="cacheCreation">${I18n.t.popup.cacheCreation}</button>
-          <button class="chart-tab" data-metric="cacheRead">${I18n.t.popup.cacheRead}</button>
-          <button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>
-        </div>
-
-        <!-- Chart Container -->
-        <div class="chart-container">
-          <div class="chart-content" id="dailyChart">
-            ${this.renderDailyChart(providerData.dailyDataForMonth)}
+        <div class="period-breakdown" data-slot="breakdown">
+          <h3 data-slot="section-title"></h3>
+          <div class="chart-tabs" data-slot="metric-tabs"></div>
+          <div class="chart-container">
+            <div class="chart-content" data-slot="chart"></div>
+          </div>
+          <div class="daily-table-container">
+            <table class="daily-table">
+              <thead data-slot="table-head"></thead>
+              <tbody data-slot="table-body"></tbody>
+            </table>
           </div>
         </div>
-
-        <div class="daily-table-container">
-          <table class="daily-table">
-            <thead>
-              <tr>
-                <th>${I18n.t.popup.date}</th>
-                <th>${I18n.t.popup.cost}</th>
-                <th>${I18n.t.popup.inputTokens}</th>
-                <th>${I18n.t.popup.outputTokens}</th>
-                <th>${I18n.t.popup.cacheCreation}</th>
-                <th>${I18n.t.popup.cacheRead}</th>
-                <th>${I18n.t.popup.messages}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${providerData.dailyDataForMonth
-                .map(
-                  ({ date, data }) => `
-                <tr class="daily-row" data-date="${date}">
-                  <td class="date-cell">${this.formatDate(date)}</td>
-                  <td class="cost-cell">${I18n.formatCurrency(data.totalCost)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalInputTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalOutputTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalCacheCreationTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalCacheReadTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.messageCount)}</td>
-                  <td class="detail-cell">
-                    <button class="detail-button" onclick="toggleHourlyDetail('${date}')" title="顯示每小時詳細資料">
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path class="expand-icon" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-                <tr class="hourly-detail-row" data-date="${date}" style="display: none;">
-                  <td colspan="8">
-                    <div class="hourly-detail-container" id="hourly-detail-${date}">
-                      <div class="loading-indicator">載入中...</div>
-                    </div>
-                  </td>
-                </tr>
-              `
-                )
-                .join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `
-        : '';
-
-    return monthSummary + dailyBreakdown;
-  }
-
-  private renderAllTimeData(): string {
-    const providerData = this.getProviderDataset();
-    if (!providerData.allTimeData || providerData.allTimeData.messageCount === 0) {
-      return `<div class="no-data"><p>${I18n.t.popup.noDataMessage}</p></div>`;
-    }
-
-    const allTimeSummary = this.renderUsageData(providerData.allTimeData);
-
-    const dailyBreakdown =
-      providerData.dailyDataForAllTime.length > 0
-        ? `
-      <div class="daily-breakdown">
-        <h3>${I18n.t.popup.monthlyBreakdown}</h3>
-
-        <!-- Chart Tabs -->
-        <div class="chart-tabs">
-          <button class="chart-tab active" data-metric="cost">${I18n.t.popup.cost}</button>
-          <button class="chart-tab" data-metric="inputTokens">${I18n.t.popup.inputTokens}</button>
-          <button class="chart-tab" data-metric="outputTokens">${I18n.t.popup.outputTokens}</button>
-          <button class="chart-tab" data-metric="cacheCreation">${I18n.t.popup.cacheCreation}</button>
-          <button class="chart-tab" data-metric="cacheRead">${I18n.t.popup.cacheRead}</button>
-          <button class="chart-tab" data-metric="messages">${I18n.t.popup.messages}</button>
-        </div>
-
-        <!-- Chart Container -->
-        <div class="chart-container">
-          <div class="chart-content" id="allTimeChart">
-            ${this.renderAllTimeChart(providerData.dailyDataForAllTime)}
-          </div>
-        </div>
-
-        <div class="daily-table-container">
-          <table class="daily-table">
-            <thead>
-              <tr>
-                <th>${I18n.t.popup.date}</th>
-                <th>${I18n.t.popup.cost}</th>
-                <th>${I18n.t.popup.inputTokens}</th>
-                <th>${I18n.t.popup.outputTokens}</th>
-                <th>${I18n.t.popup.cacheCreation}</th>
-                <th>${I18n.t.popup.cacheRead}</th>
-                <th>${I18n.t.popup.messages}</th>
-                <th></th>
-              </tr>
-            </thead>
-            <tbody>
-              ${providerData.dailyDataForAllTime
-                .map(
-                  ({ date, data }) => `
-                <tr class="daily-row" data-date="${date}">
-                  <td class="date-cell">${this.formatDate(date)}</td>
-                  <td class="cost-cell">${I18n.formatCurrency(data.totalCost)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalInputTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalOutputTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalCacheCreationTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.totalCacheReadTokens)}</td>
-                  <td class="number-cell">${I18n.formatNumber(data.messageCount)}</td>
-                  <td class="detail-cell">
-                    <button class="detail-button" onclick="toggleMonthlyDetail('${date}')" title="顯示每日詳細資料">
-                      <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                        <path class="expand-icon" d="M1.646 4.646a.5.5 0 0 1 .708 0L8 10.293l5.646-5.647a.5.5 0 0 1 .708.708l-6 6a.5.5 0 0 1-.708 0l-6-6a.5.5 0 0 1 0-.708z"/>
-                      </svg>
-                    </button>
-                  </td>
-                </tr>
-                <tr class="monthly-detail-row" data-date="${date}" style="display: none;">
-                  <td colspan="8">
-                    <div class="monthly-detail-container" id="monthly-detail-${date}">
-                      <div class="loading-indicator">載入中...</div>
-                    </div>
-                  </td>
-                </tr>
-              `
-                )
-                .join('')}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `
-        : '';
-
-    return allTimeSummary + dailyBreakdown;
-  }
-
-  private renderDailyChart(dailyDataForMonth: { date: string; data: UsageData }[]): string {
-    if (dailyDataForMonth.length === 0) {
-      return '<div class="no-chart-data">No data available</div>';
-    }
-
-    // Sort data by date (oldest first for chart display)
-    const sortedData = [...dailyDataForMonth].sort((a, b) => a.date.localeCompare(b.date));
-
-    // Generate chart bars for cost (default metric)
-    const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
-    const maxHeight = 120; // Max height in pixels
-
-    return `
-      <div class="chart-bars">
-        ${sortedData
-          .map(({ date, data }) => {
-            const height = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
-            return `
-            <div class="chart-bar-container" data-date="${date}">
-              <div class="chart-bar cost-bar clickable"
-                   style="height: ${height}px;"
-                   data-cost="${data.totalCost}"
-                   data-input="${data.totalInputTokens}"
-                   data-output="${data.totalOutputTokens}"
-                   data-cache-creation="${data.totalCacheCreationTokens}"
-                   data-cache-read="${data.totalCacheReadTokens}"
-                   data-messages="${data.messageCount}"
-                   title="${this.formatDate(date)}: ${I18n.formatCurrency(data.totalCost)} - 點擊查看每小時詳情">
-              </div>
-              <div class="chart-label">${this.getShortDate(date)}</div>
-            </div>
-          `;
-          })
-          .join('')}
       </div>
     `;
-  }
-
-  private renderAllTimeChart(dailyDataForAllTime: { date: string; data: UsageData }[]): string {
-    if (dailyDataForAllTime.length === 0) {
-      return '<div class="no-chart-data">No data available</div>';
-    }
-
-    // Sort data by date (oldest first for chart display)
-    const sortedData = [...dailyDataForAllTime].sort((a, b) => a.date.localeCompare(b.date));
-
-    // Generate chart bars for cost (default metric)
-    const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
-    const maxHeight = 120; // Max height in pixels
-
-    return `
-      <div class="chart-bars">
-        ${sortedData
-          .map(({ date, data }) => {
-            const height = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
-            return `
-            <div class="chart-bar-container" data-date="${date}">
-              <div class="chart-bar cost-bar clickable"
-                   style="height: ${height}px;"
-                   data-cost="${data.totalCost}"
-                   data-input="${data.totalInputTokens}"
-                   data-output="${data.totalOutputTokens}"
-                   data-cache-creation="${data.totalCacheCreationTokens}"
-                   data-cache-read="${data.totalCacheReadTokens}"
-                   data-messages="${data.messageCount}"
-                   title="${this.formatDate(date)}: ${I18n.formatCurrency(data.totalCost)} - 點擊查看每日詳情">
-              </div>
-              <div class="chart-label">${this.getShortDate(date)}</div>
-            </div>
-          `;
-          })
-          .join('')}
-      </div>
-    `;
-  }
-
-  private renderHourlyChart(hourlyDataForToday: { hour: string; data: UsageData }[]): string {
-    if (hourlyDataForToday.length === 0) {
-      return '<div class="no-chart-data">No data available</div>';
-    }
-
-    // Sort data by hour (chronological order)
-    const sortedData = [...hourlyDataForToday].sort((a, b) => a.hour.localeCompare(b.hour));
-
-    // Generate chart bars for cost (default metric)
-    const maxCost = Math.max(...sortedData.map((d) => d.data.totalCost));
-    const maxHeight = 120; // Max height in pixels
-
-    return `
-      <div class="chart-bars">
-        ${sortedData
-          .map(({ hour, data }) => {
-            const height = maxCost > 0 ? (data.totalCost / maxCost) * maxHeight : 0;
-            return `
-            <div class="chart-bar-container" data-hour="${hour}">
-              <div class="chart-bar cost-bar"
-                   style="height: ${height}px;"
-                   data-cost="${data.totalCost}"
-                   data-input="${data.totalInputTokens}"
-                   data-output="${data.totalOutputTokens}"
-                   data-cache-creation="${data.totalCacheCreationTokens}"
-                   data-cache-read="${data.totalCacheReadTokens}"
-                   data-messages="${data.messageCount}"
-                   title="${hour}: ${I18n.formatCurrency(data.totalCost)}">
-              </div>
-              <div class="chart-label">${hour}</div>
-            </div>
-          `;
-          })
-          .join('')}
-      </div>
-    `;
-  }
-
-  private getShortDate(dateString: string): string {
-    const date = new Date(dateString);
-    // Check if this is a month-only date (ends with -01)
-    if (dateString.endsWith('-01')) {
-      // Format as YYYY/MM for monthly data
-      return `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}`;
-    }
-    // Format as MM/DD for daily data
-    return `${date.getMonth() + 1}/${date.getDate()}`;
-  }
-
-  private formatDate(dateString: string): string {
-    const date = new Date(dateString);
-    // Check if this is a month-only date (ends with -01)
-    if (dateString.endsWith('-01')) {
-      // Format as YYYY年MM月 for monthly data
-      const year = date.getFullYear();
-      const month = date.getMonth() + 1;
-      return `${year}年${month}月`;
-    }
-    // Standard date formatting for daily data
-    return date.toLocaleDateString();
   }
 
   private getStyles(): string {
@@ -913,7 +285,7 @@ export class UsageWebviewProvider {
       }
 
       .container {
-        max-width: 800px;
+        max-width: 960px;
         margin: 0 auto;
       }
 
@@ -924,8 +296,8 @@ export class UsageWebviewProvider {
         margin-bottom: 16px;
         border-bottom: 1px solid var(--vscode-panel-border);
         padding-bottom: 16px;
+        gap: 12px;
       }
-
 
       h1 {
         margin: 0;
@@ -960,9 +332,26 @@ export class UsageWebviewProvider {
         background: var(--vscode-button-secondaryHoverBackground);
       }
 
+      .error-banner {
+        margin-bottom: 12px;
+        padding: 10px 12px;
+        border: 1px solid var(--vscode-errorForeground);
+        border-radius: 6px;
+        color: var(--vscode-errorForeground);
+        background: color-mix(in srgb, var(--vscode-errorForeground) 8%, transparent);
+      }
+
+      .no-data-state {
+        text-align: center;
+        padding: 16px;
+        margin-bottom: 12px;
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+      }
+
       .tabs {
         display: flex;
-        margin-bottom: 20px;
+        margin-bottom: 12px;
         border-bottom: 1px solid var(--vscode-panel-border);
       }
 
@@ -970,7 +359,6 @@ export class UsageWebviewProvider {
         background: transparent;
         border: none;
         padding: 8px 16px;
-        cursor: pointer;
         border-bottom: 2px solid transparent;
       }
 
@@ -1000,7 +388,6 @@ export class UsageWebviewProvider {
         border: none;
         border-right: 1px solid var(--vscode-panel-border);
         padding: 6px 14px;
-        cursor: pointer;
       }
 
       .provider-tab:last-child {
@@ -1010,6 +397,22 @@ export class UsageWebviewProvider {
       .provider-tab.active {
         background: var(--vscode-button-background);
         color: var(--vscode-button-foreground);
+      }
+
+      .provider-panel {
+        display: none;
+      }
+
+      .provider-panel.active {
+        display: block;
+      }
+
+      .panel-empty {
+        text-align: center;
+        padding: 24px 12px;
+        color: var(--vscode-descriptionForeground);
+        border: 1px dashed var(--vscode-panel-border);
+        border-radius: 8px;
       }
 
       .usage-summary {
@@ -1045,11 +448,13 @@ export class UsageWebviewProvider {
         color: var(--vscode-charts-green);
       }
 
-      .model-breakdown, .daily-breakdown {
+      .model-breakdown,
+      .period-breakdown {
         margin-top: 24px;
       }
 
-      .model-breakdown h3, .daily-breakdown h3 {
+      .model-breakdown h3,
+      .period-breakdown h3 {
         margin-bottom: 16px;
         font-size: 16px;
       }
@@ -1072,11 +477,13 @@ export class UsageWebviewProvider {
         justify-content: space-between;
         align-items: center;
         margin-bottom: 8px;
+        gap: 8px;
       }
 
       .model-name {
         font-weight: bold;
         color: var(--vscode-symbolIcon-functionForeground);
+        overflow-wrap: anywhere;
       }
 
       .model-cost {
@@ -1106,12 +513,6 @@ export class UsageWebviewProvider {
         border-radius: 4px;
         padding: 6px 12px;
         font-size: 11px;
-        cursor: pointer;
-        transition: all 0.2s ease;
-      }
-
-      .chart-tab:hover {
-        background: var(--vscode-button-secondaryHoverBackground);
       }
 
       .chart-tab.active {
@@ -1124,106 +525,73 @@ export class UsageWebviewProvider {
         background: var(--vscode-input-background);
         border: 1px solid var(--vscode-input-border);
         border-radius: 8px;
-        padding: 16px;
+        padding: 12px;
         margin-bottom: 20px;
-        height: 180px;
         overflow-x: auto;
       }
 
       .chart-content {
         width: 100%;
-        height: 100%;
-        display: flex;
-        align-items: end;
-        justify-content: center;
-      }
-
-      .chart-bars {
-        display: flex;
-        align-items: end;
-        gap: 4px;
-        min-width: fit-content;
-        height: 100%;
-        padding: 0 8px;
-      }
-
-      .chart-bar-container {
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: flex-end;
-        min-width: 40px;
-        height: 100%;
-        position: relative;
-        padding-bottom: 20px;
-      }
-
-      .chart-bar {
-        width: 24px;
-        min-height: 2px;
-        border-radius: 2px 2px 0 0;
-        transition: all 0.3s ease;
-        margin-bottom: 8px;
-      }
-
-      .chart-bar.clickable {
-        cursor: pointer;
-      }
-
-      .chart-bar.clickable:hover {
-        opacity: 0.8;
-        transform: scaleY(1.05);
-      }
-
-      .chart-bar.selected {
-        border: 2px solid var(--vscode-focusBorder);
-        box-shadow: 0 0 4px var(--vscode-focusBorder);
-      }
-
-      .cost-bar {
-        background: linear-gradient(to top, var(--vscode-charts-green), var(--vscode-charts-blue));
-      }
-
-      .input-bar {
-        background: linear-gradient(to top, var(--vscode-charts-blue), var(--vscode-charts-purple));
-      }
-
-      .output-bar {
-        background: linear-gradient(to top, var(--vscode-charts-orange), var(--vscode-charts-red));
-      }
-
-      .cache-creation-bar {
-        background: linear-gradient(to top, var(--vscode-charts-purple), var(--vscode-charts-pink));
-      }
-
-      .cache-read-bar {
-        background: linear-gradient(to top, var(--vscode-charts-yellow), var(--vscode-charts-orange));
-      }
-
-      .messages-bar {
-        background: linear-gradient(to top, var(--vscode-charts-foreground), var(--vscode-charts-lines));
-      }
-
-      .chart-label {
-        font-size: 10px;
-        color: var(--vscode-descriptionForeground);
-        text-align: center;
-        word-break: break-all;
-        line-height: 12px;
-        position: absolute;
-        bottom: 0;
-        left: 50%;
-        transform: translateX(-50%);
-        width: 100%;
+        min-height: 170px;
       }
 
       .no-chart-data {
+        min-height: 120px;
         display: flex;
         align-items: center;
         justify-content: center;
-        height: 100%;
         color: var(--vscode-descriptionForeground);
-        font-style: italic;
+      }
+
+      .chart-svg {
+        width: 100%;
+        min-height: 160px;
+      }
+
+      .chart-bar-svg {
+        transition: opacity 0.2s ease;
+      }
+
+      .chart-bar-svg.clickable {
+        cursor: pointer;
+      }
+
+      .chart-bar-svg.clickable:hover {
+        opacity: 0.85;
+      }
+
+      .chart-bar-svg.selected {
+        stroke: var(--vscode-focusBorder);
+        stroke-width: 2;
+      }
+
+      .chart-bar-svg.metric-cost {
+        fill: var(--vscode-charts-green);
+      }
+
+      .chart-bar-svg.metric-inputTokens {
+        fill: var(--vscode-charts-blue);
+      }
+
+      .chart-bar-svg.metric-outputTokens {
+        fill: var(--vscode-charts-orange);
+      }
+
+      .chart-bar-svg.metric-cacheCreation {
+        fill: var(--vscode-charts-purple);
+      }
+
+      .chart-bar-svg.metric-cacheRead {
+        fill: var(--vscode-charts-yellow);
+      }
+
+      .chart-bar-svg.metric-messages {
+        fill: var(--vscode-charts-foreground);
+      }
+
+      .chart-label-svg {
+        fill: var(--vscode-descriptionForeground);
+        font-size: 10px;
       }
 
       .daily-table-container {
@@ -1273,34 +641,6 @@ export class UsageWebviewProvider {
         font-family: var(--vscode-editor-font-family);
       }
 
-      .loading, .error, .no-data {
-        text-align: center;
-        padding: 40px 20px;
-      }
-
-      .spinner {
-        width: 32px;
-        height: 32px;
-        border: 3px solid var(--vscode-progressBar-background);
-        border-top: 3px solid var(--vscode-focusBorder);
-        border-radius: 50%;
-        animation: spin 1s linear infinite;
-        margin: 0 auto 16px;
-      }
-
-      @keyframes spin {
-        0% { transform: rotate(0deg); }
-        100% { transform: rotate(360deg); }
-      }
-
-      .error {
-        color: var(--vscode-errorForeground);
-      }
-
-      .no-data {
-        color: var(--vscode-descriptionForeground);
-      }
-
       .detail-cell {
         text-align: center;
         width: 40px;
@@ -1311,860 +651,1096 @@ export class UsageWebviewProvider {
         border: none;
         color: var(--vscode-foreground);
         cursor: pointer;
-        padding: 4px;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-        transition: transform 0.2s ease;
+        padding: 2px 6px;
       }
 
-      .detail-button:hover {
-        background: var(--vscode-list-hoverBackground);
-        border-radius: 4px;
-      }
-
-      .detail-button.expanded svg {
+      .detail-button.expanded {
         transform: rotate(180deg);
       }
 
-      .hourly-detail-row td {
+      .detail-row > td {
         padding: 0;
-        border-bottom: 1px solid var(--vscode-panel-border);
       }
 
-      .hourly-detail-container {
-        padding: 16px;
+      .drilldown-body {
+        padding: 14px;
         background: var(--vscode-input-background);
-        border-top: 1px solid var(--vscode-panel-border);
       }
 
-      .hourly-detail-container h4 {
-        margin: 0 0 12px 0;
-        font-size: 14px;
-        color: var(--vscode-foreground);
+      .drilldown-body h4 {
+        margin: 0 0 10px 0;
       }
 
-      .loading-indicator {
+      .loading-overlay {
+        position: fixed;
+        inset: 0;
+        background: color-mix(in srgb, var(--vscode-editor-background) 75%, transparent);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 9999;
+      }
+
+      .loading-overlay[hidden] {
+        display: none;
+      }
+
+      .loading-card {
+        min-width: 180px;
         text-align: center;
-        color: var(--vscode-descriptionForeground);
-        padding: 20px;
+        background: var(--vscode-editor-background);
+        border: 1px solid var(--vscode-panel-border);
+        border-radius: 8px;
+        padding: 16px;
+      }
+
+      .spinner {
+        width: 32px;
+        height: 32px;
+        border: 3px solid var(--vscode-progressBar-background);
+        border-top: 3px solid var(--vscode-focusBorder);
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 0 auto 12px;
+      }
+
+      @keyframes spin {
+        from { transform: rotate(0deg); }
+        to { transform: rotate(360deg); }
+      }
+
+      @media (max-width: 768px) {
+        body {
+          padding: 12px;
+        }
+
+        header {
+          flex-direction: column;
+          align-items: flex-start;
+        }
+
+        .actions {
+          width: 100%;
+          justify-content: flex-start;
+        }
+
+        .summary-grid {
+          grid-template-columns: 1fr 1fr;
+        }
       }
     `;
   }
 
   private getScript(): string {
     return `
-console.log("[DEBUG] === JAVASCRIPT INITIALIZATION START ===");
+(function () {
+  var vscode = acquireVsCodeApi();
+  var bootstrap = window.__i18n || {};
+  var i18n = bootstrap.t || {};
+  var popup = i18n.popup || {};
+  var statusBar = i18n.statusBar || {};
+  var decimalPlaces = Number.isFinite(bootstrap.decimalPlaces) ? bootstrap.decimalPlaces : 2;
 
-// Get VSCode API
-const vscode = acquireVsCodeApi();
-console.log("[DEBUG] VSCode API acquired");
+  var state = {
+    payload: null,
+    activeTab: getInitialTab(),
+    activeProvider: getInitialProvider(),
+    panelMetrics: new Map(),
+    drilldownMetrics: new Map(),
+    drilldownData: new Map(),
+    pendingDrilldown: new Map(),
+  };
 
-// Define basic functions
-function refresh() {
-  console.log("[DEBUG] refresh called");
-  vscode.postMessage({ command: 'refresh' });
-}
-
-function openSettings() {
-  console.log("[DEBUG] openSettings called");
-  vscode.postMessage({ command: 'openSettings' });
-}
-
-function showTab(tabName) {
-  console.log("[DEBUG] showTab called:", tabName);
-
-  try {
-    // Remove active from all tabs and contents
-    document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
-
-    // Add active to selected tab and content
-    const selectedTab = document.getElementById('tab-' + tabName);
-    const selectedContent = document.getElementById(tabName);
-
-    if (selectedTab && selectedContent) {
-      selectedTab.classList.add('active');
-      selectedContent.classList.add('active');
-      console.log("[DEBUG] Tab switched successfully to:", tabName);
-
-      // Notify extension
-      vscode.postMessage({ command: 'tabChanged', tab: tabName });
-    } else {
-      console.error("[DEBUG] Tab or content not found:", tabName);
-    }
-  } catch (error) {
-    console.error("[DEBUG] Error switching tabs:", error);
-  }
-}
-
-function showProvider(providerName) {
-  console.log("[DEBUG] showProvider called:", providerName);
-  try {
-    document.querySelectorAll('.provider-tab').forEach(tab => tab.classList.remove('active'));
-    const selected = document.getElementById('provider-' + providerName);
-    if (selected) {
-      selected.classList.add('active');
-      vscode.postMessage({ command: 'providerChanged', provider: providerName });
-    } else {
-      console.error("[DEBUG] Provider tab not found:", providerName);
-    }
-  } catch (error) {
-    console.error("[DEBUG] Error switching provider:", error);
-  }
-}
-
-function toggleHourlyDetail(date) {
-  console.log("[DEBUG] toggleHourlyDetail called for date:", date);
-
-  try {
-    const detailRow = document.querySelector('.hourly-detail-row[data-date="' + date + '"]');
-    const button = document.querySelector('.daily-row[data-date="' + date + '"] .detail-button');
-    const container = document.getElementById('hourly-detail-' + date);
-    const chartBar = document.querySelector('.chart-bar-container[data-date="' + date + '"] .chart-bar');
-
-    console.log("[DEBUG] Found elements:", {
-      detailRow: !!detailRow,
-      button: !!button,
-      container: !!container,
-      chartBar: !!chartBar
-    });
-
-    if (detailRow && button && container) {
-      const isExpanded = detailRow.style.display !== 'none' && detailRow.style.display !== '';
-
-      if (!isExpanded) {
-        // First, close all other expanded details
-        closeAllHourlyDetails();
-
-        // Show detail for this date
-        detailRow.style.display = 'table-row';
-        button.classList.add('expanded');
-
-        // Update chart bar selection state
-        if (chartBar) {
-          chartBar.classList.add('selected');
-          console.log("[DEBUG] Chart bar selected for date:", date);
-        }
-
-        console.log("[DEBUG] Showing hourly detail for date:", date);
-
-        // Request hourly data if not loaded
-        if (!container.dataset.loaded) {
-          console.log("[DEBUG] Requesting hourly data for date:", date);
-          vscode.postMessage({ command: 'getHourlyData', date: date });
-          container.dataset.loaded = 'true';
-        }
-      } else {
-        // Hide detail
-        detailRow.style.display = 'none';
-        button.classList.remove('expanded');
-
-        // Update chart bar selection state
-        if (chartBar) {
-          chartBar.classList.remove('selected');
-          console.log("[DEBUG] Chart bar deselected for date:", date);
-        }
-
-        console.log("[DEBUG] Hiding hourly detail for date:", date);
-      }
-
-    } else {
-      console.error("[DEBUG] Could not find required elements for date:", date);
-    }
-  } catch (error) {
-    console.error("[DEBUG] Error in toggleHourlyDetail:", error);
-  }
-}
-
-function closeAllHourlyDetails() {
-  console.log("[DEBUG] closeAllHourlyDetails called");
-
-  // Close all expanded detail rows
-  const allDetailRows = document.querySelectorAll('.hourly-detail-row');
-  const allButtons = document.querySelectorAll('.detail-button.expanded');
-  const allChartBars = document.querySelectorAll('.chart-bar.selected');
-
-  allDetailRows.forEach(function(row) {
-    row.style.display = 'none';
-  });
-
-  allButtons.forEach(function(btn) {
-    btn.classList.remove('expanded');
-  });
-
-  allChartBars.forEach(function(bar) {
-    bar.classList.remove('selected');
-  });
-
-  console.log("[DEBUG] Closed all detail rows");
-}
-
-function toggleMonthlyDetail(monthDate) {
-  console.log("[DEBUG] toggleMonthlyDetail called for month:", monthDate);
-
-  try {
-    const detailRow = document.querySelector('.monthly-detail-row[data-date="' + monthDate + '"]');
-    const button = document.querySelector('.daily-row[data-date="' + monthDate + '"] .detail-button');
-    const container = document.getElementById('monthly-detail-' + monthDate);
-    const chartBar = document.querySelector('.chart-bar-container[data-date="' + monthDate + '"] .chart-bar');
-
-    console.log("[DEBUG] Found elements:", {
-      detailRow: !!detailRow,
-      button: !!button,
-      container: !!container,
-      chartBar: !!chartBar
-    });
-
-    if (detailRow && button && container) {
-      const isExpanded = detailRow.style.display !== 'none' && detailRow.style.display !== '';
-
-      if (!isExpanded) {
-        // First, close all other expanded details
-        closeAllMonthlyDetails();
-
-        // Show detail for this month
-        detailRow.style.display = 'table-row';
-        button.classList.add('expanded');
-
-        // Update chart bar selection state
-        if (chartBar) {
-          chartBar.classList.add('selected');
-          console.log("[DEBUG] Chart bar selected for month:", monthDate);
-        }
-
-        console.log("[DEBUG] Showing monthly detail for month:", monthDate);
-
-        // Request monthly data if not loaded
-        if (!container.dataset.loaded) {
-          console.log("[DEBUG] Requesting daily data for month:", monthDate);
-          vscode.postMessage({ command: 'getDailyData', month: monthDate });
-          container.dataset.loaded = 'true';
-        }
-      } else {
-        // Hide detail
-        detailRow.style.display = 'none';
-        button.classList.remove('expanded');
-
-        // Update chart bar selection state
-        if (chartBar) {
-          chartBar.classList.remove('selected');
-          console.log("[DEBUG] Chart bar deselected for month:", monthDate);
-        }
-
-        console.log("[DEBUG] Hiding monthly detail for month:", monthDate);
-      }
-
-    } else {
-      console.error("[DEBUG] Could not find required elements for month:", monthDate);
-    }
-  } catch (error) {
-    console.error("[DEBUG] Error in toggleMonthlyDetail:", error);
-  }
-}
-
-function closeAllMonthlyDetails() {
-  console.log("[DEBUG] closeAllMonthlyDetails called");
-
-  // Close all expanded monthly detail rows
-  const allDetailRows = document.querySelectorAll('.monthly-detail-row');
-  const allButtons = document.querySelectorAll('.detail-button.expanded');
-  const allChartBars = document.querySelectorAll('.chart-bar.selected');
-
-  allDetailRows.forEach(function(row) {
-    row.style.display = 'none';
-  });
-
-  allButtons.forEach(function(btn) {
-    btn.classList.remove('expanded');
-  });
-
-  allChartBars.forEach(function(bar) {
-    bar.classList.remove('selected');
-  });
-
-  console.log("[DEBUG] Closed all monthly detail rows");
-}
-
-function updateHourlyChart(date, metric) {
-  console.log("[DEBUG] updateHourlyChart called with date:", date, "metric:", metric);
-
-  const container = document.getElementById('hourly-detail-' + date);
-  if (!container) return;
-
-  // Update active tab
-  const tabs = container.querySelectorAll('.chart-tab');
-  tabs.forEach(function(tab) {
-    if (tab.dataset.metric === metric) {
-      tab.classList.add('active');
-    } else {
-      tab.classList.remove('active');
-    }
-  });
-
-  // Re-render chart
-  const chartContainer = document.getElementById('hourly-chart-' + date);
-  const hourlyData = window['hourlyData_' + date];
-  if (hourlyData && chartContainer) {
-    chartContainer.innerHTML = renderHourlyChart(hourlyData, metric);
-  }
-}
-
-// Sync chart bar selection state
-function syncChartBarSelection(date, isSelected) {
-  console.log("[DEBUG] syncChartBarSelection called for date:", date, "selected:", isSelected);
-
-  const chartBar = document.querySelector('.chart-bar-container[data-date="' + date + '"] .chart-bar');
-  if (chartBar) {
-    if (isSelected) {
-      chartBar.classList.add('selected');
-    } else {
-      chartBar.classList.remove('selected');
-    }
-  }
-}
-
-// Make functions available globally
-window.refresh = refresh;
-window.openSettings = openSettings;
-window.showTab = showTab;
-window.showProvider = showProvider;
-window.toggleHourlyDetail = toggleHourlyDetail;
-window.toggleMonthlyDetail = toggleMonthlyDetail;
-window.updateHourlyChart = updateHourlyChart;
-window.syncChartBarSelection = syncChartBarSelection;
-window.closeAllHourlyDetails = closeAllHourlyDetails;
-window.closeAllMonthlyDetails = closeAllMonthlyDetails;
-
-// Handle messages from extension
-window.addEventListener('message', function(event) {
-  const message = event.data;
-  console.log("[DEBUG] Received message from extension:", message);
-
-  if (message.command === 'hourlyDataResponse') {
-    const container = document.getElementById('hourly-detail-' + message.date);
-    if (container && message.data) {
-      console.log("[DEBUG] Rendering hourly data for date:", message.date);
-      container.innerHTML = renderHourlyData(message.data, message.date);
-
-      // Re-bind chart tab events after rendering
-      bindChartTabEvents(container);
-    }
+  function getInitialTab() {
+    var active = document.querySelector('.tab.active');
+    var tab = active ? active.getAttribute('data-tab') : null;
+    return tab || 'today';
   }
 
-  if (message.command === 'dailyDataResponse') {
-    const container = document.getElementById('monthly-detail-' + message.month);
-    if (container && message.data) {
-      console.log("[DEBUG] Rendering daily data for month:", message.month);
-      container.innerHTML = renderDailyData(message.data, message.month);
-
-      // Re-bind chart tab events after rendering
-      bindChartTabEvents(container);
-    }
-  }
-});
-
-// Global event delegation for chart tabs and chart bars
-document.addEventListener('click', function(event) {
-  console.log("[DEBUG] Document click event:", event.target);
-
-  // Handle chart tab clicks
-  if (event.target.classList.contains('chart-tab')) {
-    console.log("[DEBUG] Chart tab clicked:", event.target);
-
-    event.preventDefault();
-    const metric = event.target.dataset.metric;
-    console.log("[DEBUG] Chart tab metric:", metric);
-
-    // Find the container and determine the context
-    const container = event.target.closest('.daily-breakdown') || event.target.closest('.hourly-breakdown');
-    console.log("[DEBUG] Chart tab container:", container);
-
-    if (container) {
-      // Update active tab
-      const tabs = container.querySelectorAll('.chart-tab');
-      tabs.forEach(function(tab) {
-        tab.classList.remove('active');
-      });
-      event.target.classList.add('active');
-
-      // Determine chart type and update accordingly
-      if (container.classList.contains('hourly-breakdown')) {
-        // This is an hourly detail chart - extract date from the chart content ID
-        const chartContent = container.querySelector('[id^="hourly-chart-"]');
-        if (chartContent) {
-          const date = chartContent.id.replace('hourly-chart-', '');
-          console.log("[DEBUG] Updating hourly chart for date:", date, "metric:", metric);
-          updateHourlyChart(date, metric);
-        }
-      } else {
-        // This is a main chart (daily/monthly)
-        console.log("[DEBUG] Updating main chart with metric:", metric);
-        updateMainChart(metric, container);
-      }
-    }
+  function getInitialProvider() {
+    var active = document.querySelector('.provider-tab.active');
+    var provider = active ? active.getAttribute('data-provider') : null;
+    return provider || 'claude';
   }
 
-  // Handle chart bar clicks - only for clickable charts
-  if (event.target.classList.contains('chart-bar') && event.target.classList.contains('clickable')) {
-    console.log("[DEBUG] Clickable chart bar clicked:", event.target);
-
-    event.preventDefault();
-    const container = event.target.closest('.chart-bar-container');
-    if (container) {
-      const date = container.dataset.date;
-      if (date) {
-        console.log("[DEBUG] Chart bar clicked for date:", date);
-
-        // Determine if this is a monthly chart or daily chart based on current tab
-        const activeTab = document.querySelector('.tab.active');
-        if (activeTab && activeTab.id === 'tab-all') {
-          // This is in the "all time" tab, so it's a monthly chart
-          toggleMonthlyDetail(date);
-        } else {
-          // This is in the "month" tab, so it's a daily chart
-          toggleHourlyDetail(date);
-        }
-      }
-    }
+  function byId(id) {
+    return document.getElementById(id);
   }
-});
 
-function bindChartTabEvents(container) {
-  console.log("[DEBUG] Binding chart tab events for container:", container);
-
-  const chartTabs = container.querySelectorAll('.chart-tab');
-  console.log("[DEBUG] Found chart tabs:", chartTabs.length);
-
-  chartTabs.forEach(function(tab, index) {
-    console.log("[DEBUG] Processing chart tab", index, ":", tab.dataset.metric);
-
-    // Remove existing event listeners to prevent duplicates
-    tab.removeEventListener('click', handleChartTabClick);
-
-    // Add new event listener
-    tab.addEventListener('click', handleChartTabClick);
-  });
-}
-
-function handleChartTabClick(event) {
-  console.log("[DEBUG] handleChartTabClick called");
-  event.preventDefault();
-
-  const metric = this.dataset.metric;
-  const container = this.closest('.daily-breakdown') || this.closest('.hourly-breakdown');
-
-  if (container) {
-    // Update active tab
-    const tabs = container.querySelectorAll('.chart-tab');
-    tabs.forEach(function(tab) {
-      tab.classList.remove('active');
-    });
-    this.classList.add('active');
-
-    // Update chart based on context
-    if (container.classList.contains('hourly-breakdown')) {
-      const chartContent = container.querySelector('[id^="hourly-chart-"]');
-      if (chartContent) {
-        const date = chartContent.id.replace('hourly-chart-', '');
-        updateHourlyChart(date, metric);
-      }
-    } else {
-      updateMainChart(metric, null);
-    }
-  }
-}
-
-function updateMainChart(metric, container) {
-  console.log("[DEBUG] updateMainChart called with metric:", metric, "container:", container);
-
-  // If container is provided, use it; otherwise find the active tab content
-  let targetContainer = container;
-  if (!targetContainer) {
-    targetContainer = document.querySelector('.tab-content.active');
-    if (!targetContainer) {
-      console.error("[DEBUG] No active tab content found");
+  function clearChildren(element) {
+    if (!element) {
       return;
     }
-  }
-
-  // Update chart in the target container
-  const chartBars = targetContainer.querySelectorAll('.chart-bar');
-  if (chartBars.length === 0) {
-    console.log("[DEBUG] No chart bars found in target container");
-    return;
-  }
-
-  console.log("[DEBUG] Updating", chartBars.length, "chart bars with metric:", metric);
-
-  // Calculate max values for the metric
-  const values = Array.from(chartBars).map(function(bar) {
-    const value = parseFloat(bar.dataset[getDataAttribute(metric)]) || 0;
-    return value;
-  });
-
-  const maxValue = Math.max(...values);
-  const maxHeight = 120;
-
-  console.log("[DEBUG] Max value for metric", metric, ":", maxValue);
-
-  // Update each bar
-  chartBars.forEach(function(bar, index) {
-    const value = parseFloat(bar.dataset[getDataAttribute(metric)]) || 0;
-    const height = maxValue > 0 ? (value / maxValue) * maxHeight : 2;
-
-    // Update height
-    bar.style.height = height + 'px';
-
-    // Update class - preserve clickable and selected states
-    const baseClass = 'chart-bar ' + getBarClass(metric);
-    const hasClickable = bar.classList.contains('clickable');
-    const hasSelected = bar.classList.contains('selected');
-
-    bar.className = baseClass;
-    if (hasClickable) {
-      bar.classList.add('clickable');
+    while (element.firstChild) {
+      element.removeChild(element.firstChild);
     }
-    if (hasSelected) {
-      bar.classList.add('selected');
+  }
+
+  function text(path, fallback) {
+    var parts = path.split('.');
+    var value = i18n;
+    for (var i = 0; i < parts.length; i += 1) {
+      if (!value || typeof value !== 'object') {
+        return fallback;
+      }
+      value = value[parts[i]];
     }
-
-    // Update tooltip
-    const formattedValue = formatValue(value, metric);
-    const container = bar.parentElement;
-    const date = container.dataset.date;
-    const hour = container.dataset.hour;
-
-    if (hour) {
-      bar.title = hour + ': ' + formattedValue;
-    } else if (date) {
-      const dateObj = new Date(date);
-      bar.title = dateObj.toLocaleDateString() + ': ' + formattedValue;
-    }
-  });
-}
-
-function getDataAttribute(metric) {
-  const mapping = {
-    'cost': 'cost',
-    'inputTokens': 'input',
-    'outputTokens': 'output',
-    'cacheCreation': 'cacheCreation',
-    'cacheRead': 'cacheRead',
-    'messages': 'messages'
-  };
-  return mapping[metric] || 'cost';
-}
-
-function getBarClass(metric) {
-  const mapping = {
-    'cost': 'cost-bar',
-    'inputTokens': 'input-bar',
-    'outputTokens': 'output-bar',
-    'cacheCreation': 'cache-creation-bar',
-    'cacheRead': 'cache-read-bar',
-    'messages': 'messages-bar'
-  };
-  return mapping[metric] || 'cost-bar';
-}
-
-function formatValue(value, metric) {
-  if (metric === 'cost') {
-    return '$' + value.toFixed(2);
-  } else {
-    return value.toLocaleString();
-  }
-}
-
-function renderHourlyData(hourlyData, date) {
-  console.log("[DEBUG] renderHourlyData called with data:", hourlyData);
-
-  if (!hourlyData || hourlyData.length === 0) {
-    return '<div class="no-data">當日無使用資料</div>';
+    return typeof value === 'string' ? value : fallback;
   }
 
-  let html = '<div class="hourly-breakdown">';
-  html += '<h4>' + new Date(date).toLocaleDateString() + ' ' + I18n.t.popup.hourlyBreakdown + '</h4>';
-
-  // Chart tabs
-  html += '<div class="chart-tabs">';
-  html += '<button class="chart-tab active" data-metric="cost">費用</button>';
-  html += '<button class="chart-tab" data-metric="inputTokens">輸入 Token</button>';
-  html += '<button class="chart-tab" data-metric="outputTokens">輸出 Token</button>';
-  html += '<button class="chart-tab" data-metric="cacheCreation">快取建立</button>';
-  html += '<button class="chart-tab" data-metric="cacheRead">快取讀取</button>';
-  html += '<button class="chart-tab" data-metric="messages">訊息數</button>';
-  html += '</div>';
-
-  // Chart container
-  html += '<div class="chart-container">';
-  html += '<div class="chart-content" id="hourly-chart-' + date + '">';
-  html += renderHourlyChart(hourlyData, 'cost');
-  html += '</div>';
-  html += '</div>';
-
-  // Table
-  html += '<div class="daily-table-container">';
-  html += '<table class="daily-table">';
-  html += '<thead>';
-  html += '<tr>';
-  html += '<th>時間</th>';
-  html += '<th>費用</th>';
-  html += '<th>輸入 Token</th>';
-  html += '<th>輸出 Token</th>';
-  html += '<th>快取建立</th>';
-  html += '<th>快取讀取</th>';
-  html += '<th>訊息數</th>';
-  html += '</tr>';
-  html += '</thead>';
-  html += '<tbody>';
-
-  hourlyData.forEach(function(item) {
-    html += '<tr>';
-    html += '<td class="date-cell">' + item.hour + '</td>';
-    html += '<td class="cost-cell">$' + item.data.totalCost.toFixed(2) + '</td>';
-    html += '<td class="number-cell">' + item.data.totalInputTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.totalOutputTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.totalCacheCreationTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.totalCacheReadTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.messageCount.toLocaleString() + '</td>';
-    html += '</tr>';
-  });
-
-  html += '</tbody>';
-  html += '</table>';
-  html += '</div>';
-
-  // Store data for chart updates
-  window['hourlyData_' + date] = hourlyData;
-
-  html += '</div>'; // Close hourly-breakdown
-
-  return html;
-}
-
-function renderDailyData(dailyData, monthDate) {
-  console.log("[DEBUG] renderDailyData called with data:", dailyData);
-
-  if (!dailyData || dailyData.length === 0) {
-    return '<div class="no-data">該月無使用資料</div>';
+  function formatNumber(value) {
+    var num = Number(value || 0);
+    return num.toLocaleString();
   }
 
-  let html = '<div class="daily-breakdown">';
-  html += '<h4>' + new Date(monthDate).toLocaleDateString('zh-TW', { year: 'numeric', month: 'long' }) + ' 每日使用量</h4>';
+  function formatCurrency(value) {
+    var num = Number(value || 0);
+    return '$' + num.toFixed(decimalPlaces);
+  }
 
-  // Chart tabs
-  html += '<div class="chart-tabs">';
-  html += '<button class="chart-tab active" data-metric="cost">費用</button>';
-  html += '<button class="chart-tab" data-metric="inputTokens">輸入 Token</button>';
-  html += '<button class="chart-tab" data-metric="outputTokens">輸出 Token</button>';
-  html += '<button class="chart-tab" data-metric="cacheCreation">快取建立</button>';
-  html += '<button class="chart-tab" data-metric="cacheRead">快取讀取</button>';
-  html += '<button class="chart-tab" data-metric="messages">訊息數</button>';
-  html += '</div>';
+  function escapeHtml(value) {
+    return String(value)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
 
-  // Chart container
-  html += '<div class="chart-container">';
-  html += '<div class="chart-content" id="daily-chart-' + monthDate + '">';
-  html += renderDailyChart(dailyData, 'cost');
-  html += '</div>';
-  html += '</div>';
-
-  // Table
-  html += '<div class="daily-table-container">';
-  html += '<table class="daily-table">';
-  html += '<thead>';
-  html += '<tr>';
-  html += '<th>日期</th>';
-  html += '<th>費用</th>';
-  html += '<th>輸入 Token</th>';
-  html += '<th>輸出 Token</th>';
-  html += '<th>快取建立</th>';
-  html += '<th>快取讀取</th>';
-  html += '<th>訊息數</th>';
-  html += '</tr>';
-  html += '</thead>';
-  html += '<tbody>';
-
-  dailyData.forEach(function(item) {
-    const dateObj = new Date(item.date);
-    const formattedDate = dateObj.toLocaleDateString('zh-TW', { month: 'numeric', day: 'numeric' });
-
-    html += '<tr>';
-    html += '<td class="date-cell">' + formattedDate + '</td>';
-    html += '<td class="cost-cell">$' + item.data.totalCost.toFixed(2) + '</td>';
-    html += '<td class="number-cell">' + item.data.totalInputTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.totalOutputTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.totalCacheCreationTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.totalCacheReadTokens.toLocaleString() + '</td>';
-    html += '<td class="number-cell">' + item.data.messageCount.toLocaleString() + '</td>';
-    html += '</tr>';
-  });
-
-  html += '</tbody>';
-  html += '</table>';
-  html += '</div>';
-
-  // Store data for chart updates
-  window['dailyData_' + monthDate] = dailyData;
-
-  html += '</div>'; // Close daily-breakdown
-
-  return html;
-}
-
-function renderDailyChart(dailyData, metric) {
-  console.log("[DEBUG] renderDailyChart called with metric:", metric);
-
-  const maxValues = {
-    cost: Math.max(...dailyData.map(d => d.data.totalCost)),
-    inputTokens: Math.max(...dailyData.map(d => d.data.totalInputTokens)),
-    outputTokens: Math.max(...dailyData.map(d => d.data.totalOutputTokens)),
-    cacheCreation: Math.max(...dailyData.map(d => d.data.totalCacheCreationTokens)),
-    cacheRead: Math.max(...dailyData.map(d => d.data.totalCacheReadTokens)),
-    messages: Math.max(...dailyData.map(d => d.data.messageCount))
-  };
-
-  const maxHeight = 120;
-  const maxValue = maxValues[metric] || 0;
-
-  let html = '<div class="chart-bars">';
-
-  dailyData.forEach(function(item) {
-    let value = 0;
-    let barClass = 'cost-bar';
-
-    switch(metric) {
+  function metricLabel(metric) {
+    switch (metric) {
       case 'cost':
-        value = item.data.totalCost;
-        barClass = 'cost-bar';
-        break;
+        return popup.cost || 'Cost';
       case 'inputTokens':
-        value = item.data.totalInputTokens;
-        barClass = 'input-bar';
-        break;
+        return popup.inputTokens || 'Input Tokens';
       case 'outputTokens':
-        value = item.data.totalOutputTokens;
-        barClass = 'output-bar';
-        break;
+        return popup.outputTokens || 'Output Tokens';
       case 'cacheCreation':
-        value = item.data.totalCacheCreationTokens;
-        barClass = 'cache-creation-bar';
-        break;
+        return popup.cacheCreation || 'Cache Creation';
       case 'cacheRead':
-        value = item.data.totalCacheReadTokens;
-        barClass = 'cache-read-bar';
-        break;
+        return popup.cacheRead || 'Cache Read';
       case 'messages':
-        value = item.data.messageCount;
-        barClass = 'messages-bar';
-        break;
+        return popup.messages || 'Messages';
+      default:
+        return metric;
+    }
+  }
+
+  function metricValue(usageData, metric) {
+    if (!usageData) {
+      return 0;
     }
 
-    const height = maxValue > 0 ? Math.max((value / maxValue) * maxHeight, 2) : 2;
-    const dateObj = new Date(item.date);
-    const shortDate = dateObj.getDate().toString();
-
-    html += '<div class="chart-bar-container" data-date="' + item.date + '">';
-    html += '<div class="chart-bar ' + barClass + '" ';
-    html += 'style="height: ' + height + 'px;" ';
-    html += 'data-cost="' + item.data.totalCost + '" ';
-    html += 'data-input="' + item.data.totalInputTokens + '" ';
-    html += 'data-output="' + item.data.totalOutputTokens + '" ';
-    html += 'data-cache-creation="' + item.data.totalCacheCreationTokens + '" ';
-    html += 'data-cache-read="' + item.data.totalCacheReadTokens + '" ';
-    html += 'data-messages="' + item.data.messageCount + '" ';
-    html += 'title="' + dateObj.toLocaleDateString('zh-TW') + ': ' + formatValue(value, metric) + '">';
-    html += '</div>';
-    html += '<div class="chart-label">' + shortDate + '</div>';
-    html += '</div>';
-  });
-
-  html += '</div>';
-
-  return html;
-}
-
-function renderHourlyChart(hourlyData, metric) {
-  console.log("[DEBUG] renderHourlyChart called with metric:", metric);
-
-  const maxValues = {
-    cost: Math.max(...hourlyData.map(d => d.data.totalCost)),
-    inputTokens: Math.max(...hourlyData.map(d => d.data.totalInputTokens)),
-    outputTokens: Math.max(...hourlyData.map(d => d.data.totalOutputTokens)),
-    cacheCreation: Math.max(...hourlyData.map(d => d.data.totalCacheCreationTokens)),
-    cacheRead: Math.max(...hourlyData.map(d => d.data.totalCacheReadTokens)),
-    messages: Math.max(...hourlyData.map(d => d.data.messageCount))
-  };
-
-  const maxHeight = 120;
-  const maxValue = maxValues[metric] || 0;
-
-  let html = '<div class="chart-bars">';
-
-  hourlyData.forEach(function(item) {
-    let value = 0;
-    let barClass = 'cost-bar';
-
-    switch(metric) {
+    switch (metric) {
       case 'cost':
-        value = item.data.totalCost;
-        barClass = 'cost-bar';
-        break;
+        return usageData.totalCost || 0;
       case 'inputTokens':
-        value = item.data.totalInputTokens;
-        barClass = 'input-bar';
-        break;
+        return usageData.totalInputTokens || 0;
       case 'outputTokens':
-        value = item.data.totalOutputTokens;
-        barClass = 'output-bar';
-        break;
+        return usageData.totalOutputTokens || 0;
       case 'cacheCreation':
-        value = item.data.totalCacheCreationTokens;
-        barClass = 'cache-creation-bar';
-        break;
+        return usageData.totalCacheCreationTokens || 0;
       case 'cacheRead':
-        value = item.data.totalCacheReadTokens;
-        barClass = 'cache-read-bar';
-        break;
+        return usageData.totalCacheReadTokens || 0;
       case 'messages':
-        value = item.data.messageCount;
-        barClass = 'messages-bar';
-        break;
+        return usageData.messageCount || 0;
+      default:
+        return 0;
+    }
+  }
+
+  function periodData(dataset, period) {
+    if (!dataset) {
+      return {
+        summary: null,
+        points: [],
+      };
     }
 
-    const height = maxValue > 0 ? Math.max((value / maxValue) * maxHeight, 2) : 2;
+    if (period === 'today') {
+      return {
+        summary: dataset.todayData || null,
+        points: dataset.hourlyDataForToday || [],
+      };
+    }
 
-    html += '<div class="chart-bar-container" data-hour="' + item.hour + '">';
-    html += '<div class="chart-bar ' + barClass + '" ';
-    html += 'style="height: ' + height + 'px;" ';
-    html += 'data-cost="' + item.data.totalCost + '" ';
-    html += 'data-input="' + item.data.totalInputTokens + '" ';
-    html += 'data-output="' + item.data.totalOutputTokens + '" ';
-    html += 'data-cache-creation="' + item.data.totalCacheCreationTokens + '" ';
-    html += 'data-cache-read="' + item.data.totalCacheReadTokens + '" ';
-    html += 'data-messages="' + item.data.messageCount + '" ';
-    html += 'title="' + item.hour + ': ' + formatValue(value, metric) + '">';
-    html += '</div>';
-    html += '<div class="chart-label">' + item.hour + '</div>';
-    html += '</div>';
-  });
+    if (period === 'month') {
+      return {
+        summary: dataset.monthData || null,
+        points: dataset.dailyDataForMonth || [],
+      };
+    }
 
-  html += '</div>';
+    return {
+      summary: dataset.allTimeData || null,
+      points: dataset.dailyDataForAllTime || [],
+    };
+  }
 
-  return html;
-}
+  function chartLabelForPoint(period, point) {
+    if (period === 'today') {
+      return point.hour || '';
+    }
 
-// Initialize chart tab events for existing elements
-setTimeout(function() {
-  console.log("[DEBUG] Initializing chart tab events for existing elements");
-  const existingChartContainers = document.querySelectorAll('.daily-breakdown');
-  existingChartContainers.forEach(function(container) {
-    bindChartTabEvents(container);
-  });
-}, 1000);
+    var date = new Date(point.date || '');
+    if (isNaN(date.getTime())) {
+      return String(point.date || '');
+    }
 
-console.log("[DEBUG] All functions defined and ready");`;
+    if (period === 'all') {
+      return String(date.getFullYear()) + '/' + String(date.getMonth() + 1).padStart(2, '0');
+    }
+
+    return String(date.getMonth() + 1) + '/' + String(date.getDate());
+  }
+
+  function tableLabelForPoint(period, point) {
+    if (period === 'today') {
+      return point.hour || '';
+    }
+
+    var date = new Date(point.date || '');
+    if (isNaN(date.getTime())) {
+      return String(point.date || '');
+    }
+
+    if (period === 'all') {
+      return String(date.getFullYear()) + '/' + String(date.getMonth() + 1).padStart(2, '0');
+    }
+
+    return date.toLocaleDateString();
+  }
+
+  function sortForChart(period, points) {
+    var sorted = points.slice();
+
+    if (period === 'today') {
+      sorted.sort(function (a, b) {
+        return String(a.hour || '').localeCompare(String(b.hour || ''));
+      });
+      return sorted;
+    }
+
+    sorted.sort(function (a, b) {
+      return String(a.date || '').localeCompare(String(b.date || ''));
+    });
+    return sorted;
+  }
+
+  function panelKey(period, provider) {
+    return period + ':' + provider;
+  }
+
+  function queryPanel(period, provider) {
+    return document.querySelector('.provider-panel[data-period="' + period + '"][data-provider="' + provider + '"]');
+  }
+
+  function applyLoading(loading) {
+    var overlay = byId('loading-overlay');
+    if (!overlay) {
+      return;
+    }
+
+    if (loading) {
+      overlay.removeAttribute('hidden');
+      return;
+    }
+
+    overlay.setAttribute('hidden', 'hidden');
+  }
+
+  function applyUpdate(payload) {
+    state.payload = payload;
+
+    var errorBanner = byId('error-banner');
+    if (errorBanner) {
+      if (payload.error) {
+        errorBanner.textContent = String(payload.error);
+        errorBanner.removeAttribute('hidden');
+      } else {
+        errorBanner.textContent = '';
+        errorBanner.setAttribute('hidden', 'hidden');
+      }
+    }
+
+    var noData = byId('no-data');
+    if (noData) {
+      if (payload.hasAnyData) {
+        noData.setAttribute('hidden', 'hidden');
+      } else {
+        noData.removeAttribute('hidden');
+      }
+    }
+
+    var codexTab = document.querySelector('.provider-tab[data-provider="codex"]');
+    if (codexTab) {
+      if (payload.codexEnabled) {
+        codexTab.removeAttribute('hidden');
+      } else {
+        codexTab.setAttribute('hidden', 'hidden');
+      }
+    }
+
+    var codexPanels = document.querySelectorAll('.provider-panel[data-provider="codex"]');
+    codexPanels.forEach(function (panel) {
+      if (payload.codexEnabled) {
+        panel.removeAttribute('hidden');
+      } else {
+        panel.setAttribute('hidden', 'hidden');
+      }
+    });
+
+    if (!payload.codexEnabled && state.activeProvider === 'codex') {
+      setActiveProvider('claude', true);
+    }
+
+    renderAllPanels(payload);
+  }
+
+  function renderAllPanels(payload) {
+    renderPanel('today', 'claude', payload.claude);
+    renderPanel('month', 'claude', payload.claude);
+    renderPanel('all', 'claude', payload.claude);
+
+    renderPanel('today', 'codex', payload.codex);
+    renderPanel('month', 'codex', payload.codex);
+    renderPanel('all', 'codex', payload.codex);
+  }
+
+  function renderPanel(period, provider, dataset) {
+    var panel = queryPanel(period, provider);
+    if (!panel) {
+      return;
+    }
+
+    var summarySlot = panel.querySelector('[data-slot="summary"]');
+    var emptySlot = panel.querySelector('[data-slot="panel-empty"]');
+    var breakdown = panel.querySelector('[data-slot="breakdown"]');
+    var sectionTitle = panel.querySelector('[data-slot="section-title"]');
+    var metricTabs = panel.querySelector('[data-slot="metric-tabs"]');
+    var chartSlot = panel.querySelector('[data-slot="chart"]');
+    var tableHead = panel.querySelector('[data-slot="table-head"]');
+    var tableBody = panel.querySelector('[data-slot="table-body"]');
+
+    clearChildren(summarySlot);
+    clearChildren(metricTabs);
+    clearChildren(tableHead);
+    clearChildren(tableBody);
+
+    var periodInfo = periodData(dataset, period);
+    var summary = periodInfo.summary;
+    var points = Array.isArray(periodInfo.points) ? periodInfo.points : [];
+
+    var hasSummaryData = !!summary && Number(summary.messageCount || 0) > 0;
+
+    if (!hasSummaryData) {
+      if (emptySlot) {
+        emptySlot.removeAttribute('hidden');
+      }
+      if (breakdown) {
+        breakdown.setAttribute('hidden', 'hidden');
+      }
+      return;
+    }
+
+    if (emptySlot) {
+      emptySlot.setAttribute('hidden', 'hidden');
+    }
+    if (breakdown) {
+      breakdown.removeAttribute('hidden');
+    }
+
+    renderSummary(summarySlot, summary);
+
+    if (sectionTitle) {
+      if (period === 'today') {
+        sectionTitle.textContent = popup.hourlyBreakdown || 'Hourly Usage';
+      } else if (period === 'month') {
+        sectionTitle.textContent = popup.dailyBreakdown || 'Daily Usage';
+      } else {
+        sectionTitle.textContent = popup.monthlyBreakdown || 'Monthly Usage';
+      }
+    }
+
+    var key = panelKey(period, provider);
+    var metric = state.panelMetrics.get(key) || 'cost';
+    state.panelMetrics.set(key, metric);
+
+    renderMetricTabs(metricTabs, metric, {
+      scope: 'panel',
+      key: key,
+    });
+
+    renderPanelChart(period, panel, points, metric);
+    renderPanelTable(period, panel, points);
+  }
+
+  function renderSummary(summarySlot, usageData) {
+    if (!summarySlot || !usageData) {
+      return;
+    }
+
+    var root = document.createElement('div');
+    root.className = 'usage-summary';
+
+    var grid = document.createElement('div');
+    grid.className = 'summary-grid';
+
+    appendSummaryItem(grid, metricLabel('cost'), formatCurrency(usageData.totalCost || 0), true);
+    appendSummaryItem(grid, metricLabel('messages'), formatNumber(usageData.messageCount || 0), false);
+    appendSummaryItem(grid, metricLabel('inputTokens'), formatNumber(usageData.totalInputTokens || 0), false);
+    appendSummaryItem(grid, metricLabel('outputTokens'), formatNumber(usageData.totalOutputTokens || 0), false);
+    appendSummaryItem(grid, metricLabel('cacheCreation'), formatNumber(usageData.totalCacheCreationTokens || 0), false);
+    appendSummaryItem(grid, metricLabel('cacheRead'), formatNumber(usageData.totalCacheReadTokens || 0), false);
+
+    root.appendChild(grid);
+
+    var entries = Object.entries(usageData.modelBreakdown || {});
+    if (entries.length > 0) {
+      var modelBreakdown = document.createElement('div');
+      modelBreakdown.className = 'model-breakdown';
+
+      var title = document.createElement('h3');
+      title.textContent = popup.modelBreakdown || 'Model Usage';
+      modelBreakdown.appendChild(title);
+
+      var modelList = document.createElement('div');
+      modelList.className = 'model-list';
+
+      entries.forEach(function (entry) {
+        var modelName = entry[0];
+        var modelData = entry[1];
+
+        var item = document.createElement('div');
+        item.className = 'model-item';
+
+        var header = document.createElement('div');
+        header.className = 'model-header';
+
+        var nameNode = document.createElement('span');
+        nameNode.className = 'model-name';
+        nameNode.textContent = modelName;
+
+        var costNode = document.createElement('span');
+        costNode.className = 'model-cost';
+        costNode.textContent = formatCurrency(modelData.cost || 0);
+
+        header.appendChild(nameNode);
+        header.appendChild(costNode);
+
+        var details = document.createElement('div');
+        details.className = 'model-details';
+
+        appendDetail(details, metricLabel('inputTokens'), formatNumber(modelData.inputTokens || 0));
+        appendDetail(details, metricLabel('outputTokens'), formatNumber(modelData.outputTokens || 0));
+        appendDetail(details, metricLabel('cacheCreation'), formatNumber(modelData.cacheCreationTokens || 0));
+        appendDetail(details, metricLabel('cacheRead'), formatNumber(modelData.cacheReadTokens || 0));
+        appendDetail(details, metricLabel('messages'), formatNumber(modelData.count || 0));
+
+        item.appendChild(header);
+        item.appendChild(details);
+        modelList.appendChild(item);
+      });
+
+      modelBreakdown.appendChild(modelList);
+      root.appendChild(modelBreakdown);
+    }
+
+    summarySlot.appendChild(root);
+  }
+
+  function appendSummaryItem(grid, labelText, valueText, isCost) {
+    var item = document.createElement('div');
+    item.className = 'summary-item';
+
+    var label = document.createElement('div');
+    label.className = 'label';
+    label.textContent = labelText;
+
+    var value = document.createElement('div');
+    value.className = isCost ? 'value cost' : 'value';
+    value.textContent = valueText;
+
+    item.appendChild(label);
+    item.appendChild(value);
+    grid.appendChild(item);
+  }
+
+  function appendDetail(parent, label, value) {
+    var node = document.createElement('span');
+    node.textContent = label + ': ' + value;
+    parent.appendChild(node);
+  }
+
+  function renderMetricTabs(container, activeMetric, meta) {
+    if (!container) {
+      return;
+    }
+
+    var metrics = ['cost', 'inputTokens', 'outputTokens', 'cacheCreation', 'cacheRead', 'messages'];
+
+    metrics.forEach(function (metric) {
+      var button = document.createElement('button');
+      button.className = metric === activeMetric ? 'chart-tab active' : 'chart-tab';
+      button.setAttribute('data-role', 'metric-tab');
+      button.setAttribute('data-metric', metric);
+      button.setAttribute('data-scope', meta.scope);
+      button.setAttribute('data-key', meta.key);
+      button.textContent = metricLabel(metric);
+      container.appendChild(button);
+    });
+  }
+
+  function panelChartPoints(period, points) {
+    var sorted = sortForChart(period, points);
+    return sorted.map(function (point) {
+      var key = period === 'today' ? String(point.hour || '') : String(point.date || '');
+      return {
+        key: key,
+        label: chartLabelForPoint(period, point),
+        usageData: point.data || {},
+      };
+    });
+  }
+
+  function renderPanelChart(period, panel, points, metric) {
+    var chartSlot = panel.querySelector('[data-slot="chart"]');
+    if (!chartSlot) {
+      return;
+    }
+
+    var items = panelChartPoints(period, points);
+    var clickableKind = period === 'month' ? 'hourly' : period === 'all' ? 'daily' : null;
+
+    // SAFETY: chart SVG is generated locally; inserted values are numeric or escaped labels.
+    chartSlot.innerHTML = buildChartSvg(items, metric, clickableKind);
+  }
+
+  function buildChartSvg(items, metric, clickableKind) {
+    if (!items || items.length === 0) {
+      return '<div class="no-chart-data">' + escapeHtml(popup.noDataMessage || 'No data available') + '</div>';
+    }
+
+    var width = Math.max(360, items.length * 42);
+    var height = 160;
+    var chartTop = 10;
+    var chartBottom = 122;
+    var chartHeight = chartBottom - chartTop;
+    var left = 18;
+    var innerWidth = width - left * 2;
+    var barWidth = Math.max(8, Math.floor(innerWidth / (items.length * 1.5)));
+    var step = innerWidth / items.length;
+
+    var maxValue = 0;
+    items.forEach(function (item) {
+      var value = metricValue(item.usageData, metric);
+      if (value > maxValue) {
+        maxValue = value;
+      }
+    });
+
+    var content = '';
+
+    for (var i = 0; i < items.length; i += 1) {
+      var item = items[i];
+      var value = metricValue(item.usageData, metric);
+      var normalized = maxValue > 0 ? value / maxValue : 0;
+      var barHeight = Math.max(2, normalized * chartHeight);
+      var x = left + i * step + (step - barWidth) / 2;
+      var y = chartBottom - barHeight;
+      var title = item.label + ': ' + (metric === 'cost' ? formatCurrency(value) : formatNumber(value));
+      var extra = '';
+
+      if (clickableKind && item.key) {
+        extra = ' data-click-kind="' + escapeHtml(clickableKind) + '" data-detail-key="' + escapeHtml(item.key) + '"';
+      }
+
+      content += '<g>';
+      content += '<rect class="chart-bar-svg metric-' + escapeHtml(metric) + (clickableKind ? ' clickable' : '') + '"';
+      content += ' x="' + x.toFixed(2) + '" y="' + y.toFixed(2) + '"';
+      content += ' width="' + barWidth + '" height="' + barHeight.toFixed(2) + '"';
+      content += extra + '>';
+      content += '<title>' + escapeHtml(title) + '</title>';
+      content += '</rect>';
+      content += '<text class="chart-label-svg" x="' + (x + barWidth / 2).toFixed(2) + '" y="142" text-anchor="middle">';
+      content += escapeHtml(item.label);
+      content += '</text>';
+      content += '</g>';
+    }
+
+    return '<svg class="chart-svg" viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="xMidYMid meet">' + content + '</svg>';
+  }
+
+  function renderPanelTable(period, panel, points) {
+    var tableHead = panel.querySelector('[data-slot="table-head"]');
+    var tableBody = panel.querySelector('[data-slot="table-body"]');
+    if (!tableHead || !tableBody) {
+      return;
+    }
+
+    clearChildren(tableHead);
+    clearChildren(tableBody);
+
+    var headerRow = document.createElement('tr');
+    var headers = [
+      period === 'today' ? (popup.hourlyBreakdown || 'Hour') : (popup.date || 'Date'),
+      metricLabel('cost'),
+      metricLabel('inputTokens'),
+      metricLabel('outputTokens'),
+      metricLabel('cacheCreation'),
+      metricLabel('cacheRead'),
+      metricLabel('messages'),
+    ];
+
+    if (period !== 'today') {
+      headers.push('');
+    }
+
+    headers.forEach(function (header) {
+      var th = document.createElement('th');
+      th.textContent = header;
+      headerRow.appendChild(th);
+    });
+
+    tableHead.appendChild(headerRow);
+
+    points.forEach(function (point) {
+      var usageData = point.data || {};
+      var row = document.createElement('tr');
+
+      appendCell(row, tableLabelForPoint(period, point), 'date-cell');
+      appendCell(row, formatCurrency(usageData.totalCost || 0), 'cost-cell');
+      appendCell(row, formatNumber(usageData.totalInputTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.totalOutputTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.totalCacheCreationTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.totalCacheReadTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.messageCount || 0), 'number-cell');
+
+      if (period !== 'today') {
+        var detailCell = document.createElement('td');
+        detailCell.className = 'detail-cell';
+
+        var detailButton = document.createElement('button');
+        detailButton.className = 'detail-button';
+        detailButton.setAttribute('data-role', 'detail-button');
+        detailButton.setAttribute('data-kind', period === 'month' ? 'hourly' : 'daily');
+        detailButton.setAttribute('data-key', point.date || '');
+        detailButton.textContent = 'v';
+
+        detailCell.appendChild(detailButton);
+        row.appendChild(detailCell);
+      }
+
+      tableBody.appendChild(row);
+
+      if (period !== 'today') {
+        var detailRow = document.createElement('tr');
+        detailRow.className = 'detail-row';
+        detailRow.setAttribute('hidden', 'hidden');
+        detailRow.setAttribute('data-detail-kind', period === 'month' ? 'hourly' : 'daily');
+        detailRow.setAttribute('data-detail-key', point.date || '');
+
+        var detailTd = document.createElement('td');
+        detailTd.colSpan = 8;
+
+        var detailContainer = document.createElement('div');
+        detailContainer.className = 'drilldown-body';
+        detailContainer.setAttribute('data-drilldown-kind', period === 'month' ? 'hourly' : 'daily');
+        detailContainer.setAttribute('data-detail-key', point.date || '');
+
+        detailTd.appendChild(detailContainer);
+        detailRow.appendChild(detailTd);
+        tableBody.appendChild(detailRow);
+      }
+    });
+  }
+
+  function appendCell(row, value, className) {
+    var td = document.createElement('td');
+    td.className = className;
+    td.textContent = value;
+    row.appendChild(td);
+  }
+
+  function setActiveTab(tab, notifyHost) {
+    state.activeTab = tab;
+
+    document.querySelectorAll('.tab').forEach(function (button) {
+      var isActive = button.getAttribute('data-tab') === tab;
+      button.classList.toggle('active', isActive);
+    });
+
+    document.querySelectorAll('.tab-content').forEach(function (content) {
+      var isActive = content.getAttribute('data-period') === tab;
+      content.classList.toggle('active', isActive);
+    });
+
+    if (notifyHost) {
+      vscode.postMessage({ command: 'tabChanged', tab: tab });
+    }
+  }
+
+  function setActiveProvider(provider, notifyHost) {
+    state.activeProvider = provider;
+
+    document.querySelectorAll('.provider-tab').forEach(function (button) {
+      var isActive = button.getAttribute('data-provider') === provider;
+      button.classList.toggle('active', isActive);
+    });
+
+    document.querySelectorAll('.tab-content').forEach(function (content) {
+      content.querySelectorAll('.provider-panel').forEach(function (panel) {
+        var panelProvider = panel.getAttribute('data-provider');
+        panel.classList.toggle('active', panelProvider === provider);
+      });
+    });
+
+    if (notifyHost) {
+      vscode.postMessage({ command: 'providerChanged', provider: provider });
+    }
+  }
+
+  function closeDetails(panel) {
+    panel.querySelectorAll('.detail-row').forEach(function (row) {
+      row.setAttribute('hidden', 'hidden');
+    });
+
+    panel.querySelectorAll('.detail-button').forEach(function (button) {
+      button.classList.remove('expanded');
+    });
+
+    panel.querySelectorAll('.chart-bar-svg.selected').forEach(function (bar) {
+      bar.classList.remove('selected');
+    });
+  }
+
+  function openDetail(panel, kind, key) {
+    if (!key) {
+      return;
+    }
+
+    var row = panel.querySelector('.detail-row[data-detail-kind="' + kind + '"][data-detail-key="' + key + '"]');
+    var button = panel.querySelector('.detail-button[data-kind="' + kind + '"][data-key="' + key + '"]');
+
+    if (!row || !button) {
+      return;
+    }
+
+    var isHidden = row.hasAttribute('hidden');
+
+    closeDetails(panel);
+
+    if (!isHidden) {
+      return;
+    }
+
+    row.removeAttribute('hidden');
+    button.classList.add('expanded');
+
+    var selectedBar = panel.querySelector('.chart-bar-svg[data-detail-key="' + key + '"]');
+    if (selectedBar) {
+      selectedBar.classList.add('selected');
+    }
+
+    var container = row.querySelector('.drilldown-body');
+    if (!container) {
+      return;
+    }
+
+    var responseKey = kind + ':' + key;
+    state.pendingDrilldown.set(responseKey, container);
+
+    if (container.getAttribute('data-loaded') === 'true') {
+      return;
+    }
+
+    container.setAttribute('data-loaded', 'true');
+    container.textContent = statusBar.loading || 'Loading...';
+
+    if (kind === 'hourly') {
+      vscode.postMessage({ command: 'getHourlyData', date: key });
+    } else {
+      vscode.postMessage({ command: 'getDailyData', month: key });
+    }
+  }
+
+  function renderDrilldown(kind, key, data) {
+    var responseKey = kind + ':' + key;
+    var container = state.pendingDrilldown.get(responseKey);
+
+    if (!container) {
+      container = document.querySelector('.drilldown-body[data-drilldown-kind="' + kind + '"][data-detail-key="' + key + '"]');
+    }
+
+    if (!container) {
+      return;
+    }
+
+    state.pendingDrilldown.delete(responseKey);
+    state.drilldownData.set(responseKey, Array.isArray(data) ? data : []);
+
+    clearChildren(container);
+
+    var rows = Array.isArray(data) ? data : [];
+    if (rows.length === 0) {
+      var empty = document.createElement('div');
+      empty.className = 'no-chart-data';
+      empty.textContent = popup.noDataMessage || 'No data available';
+      container.appendChild(empty);
+      return;
+    }
+
+    var wrapper = document.createElement('div');
+    wrapper.className = 'period-breakdown';
+
+    var title = document.createElement('h4');
+    if (kind === 'hourly') {
+      title.textContent = (popup.hourlyBreakdown || 'Hourly Usage') + ' - ' + tableLabelForDrilldownKey(key);
+    } else {
+      title.textContent = (popup.dailyBreakdown || 'Daily Usage') + ' - ' + tableLabelForDrilldownKey(key, true);
+    }
+    wrapper.appendChild(title);
+
+    var metricTabs = document.createElement('div');
+    metricTabs.className = 'chart-tabs';
+    var metric = state.drilldownMetrics.get(responseKey) || 'cost';
+    state.drilldownMetrics.set(responseKey, metric);
+
+    renderMetricTabs(metricTabs, metric, {
+      scope: 'drilldown',
+      key: responseKey,
+    });
+    wrapper.appendChild(metricTabs);
+
+    var chartContainer = document.createElement('div');
+    chartContainer.className = 'chart-container';
+    var chartContent = document.createElement('div');
+    chartContent.className = 'chart-content';
+    chartContent.setAttribute('data-drilldown-chart', responseKey);
+    chartContainer.appendChild(chartContent);
+    wrapper.appendChild(chartContainer);
+
+    var tableContainer = document.createElement('div');
+    tableContainer.className = 'daily-table-container';
+    var table = document.createElement('table');
+    table.className = 'daily-table';
+
+    var head = document.createElement('thead');
+    var headRow = document.createElement('tr');
+    [
+      kind === 'hourly' ? (popup.hourlyBreakdown || 'Hour') : (popup.date || 'Date'),
+      metricLabel('cost'),
+      metricLabel('inputTokens'),
+      metricLabel('outputTokens'),
+      metricLabel('cacheCreation'),
+      metricLabel('cacheRead'),
+      metricLabel('messages'),
+    ].forEach(function (header) {
+      var th = document.createElement('th');
+      th.textContent = header;
+      headRow.appendChild(th);
+    });
+    head.appendChild(headRow);
+    table.appendChild(head);
+
+    var body = document.createElement('tbody');
+    rows.forEach(function (item) {
+      var usageData = item.data || {};
+      var row = document.createElement('tr');
+      appendCell(row, kind === 'hourly' ? String(item.hour || '') : tableLabelForPoint('month', item), 'date-cell');
+      appendCell(row, formatCurrency(usageData.totalCost || 0), 'cost-cell');
+      appendCell(row, formatNumber(usageData.totalInputTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.totalOutputTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.totalCacheCreationTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.totalCacheReadTokens || 0), 'number-cell');
+      appendCell(row, formatNumber(usageData.messageCount || 0), 'number-cell');
+      body.appendChild(row);
+    });
+
+    table.appendChild(body);
+    tableContainer.appendChild(table);
+    wrapper.appendChild(tableContainer);
+    container.appendChild(wrapper);
+
+    renderDrilldownChart(responseKey, metric);
+  }
+
+  function tableLabelForDrilldownKey(key, monthLabel) {
+    var date = new Date(key);
+    if (isNaN(date.getTime())) {
+      return String(key);
+    }
+
+    if (monthLabel) {
+      return String(date.getFullYear()) + '/' + String(date.getMonth() + 1).padStart(2, '0');
+    }
+
+    return date.toLocaleDateString();
+  }
+
+  function renderDrilldownChart(drilldownKey, metric) {
+    var chartSlot = document.querySelector('[data-drilldown-chart="' + drilldownKey + '"]');
+    if (!chartSlot) {
+      return;
+    }
+
+    var data = state.drilldownData.get(drilldownKey) || [];
+    var kind = drilldownKey.startsWith('hourly:') ? 'hourly' : 'daily';
+
+    var points = data.map(function (item) {
+      return {
+        key: kind === 'hourly' ? String(item.hour || '') : String(item.date || ''),
+        label: kind === 'hourly' ? String(item.hour || '') : chartLabelForPoint('month', item),
+        usageData: item.data || {},
+      };
+    });
+
+    // SAFETY: chart SVG is generated locally; inserted values are numeric or escaped labels.
+    chartSlot.innerHTML = buildChartSvg(points, metric, null);
+  }
+
+  function updatePanelMetric(key, metric) {
+    state.panelMetrics.set(key, metric);
+
+    var parts = key.split(':');
+    if (parts.length !== 2 || !state.payload) {
+      return;
+    }
+
+    var period = parts[0];
+    var provider = parts[1];
+    var dataset = provider === 'codex' ? state.payload.codex : state.payload.claude;
+    var panel = queryPanel(period, provider);
+    if (!panel) {
+      return;
+    }
+
+    var points = periodData(dataset, period).points || [];
+    renderPanelChart(period, panel, points, metric);
+  }
+
+  function updateMetricButtons(scope, key, metric) {
+    document.querySelectorAll('.chart-tab[data-scope="' + scope + '"][data-key="' + key + '"]').forEach(function (button) {
+      button.classList.toggle('active', button.getAttribute('data-metric') === metric);
+    });
+  }
+
+  function handleClick(event) {
+    var target = event.target;
+    if (!(target instanceof HTMLElement)) {
+      return;
+    }
+
+    var refreshButton = target.closest('#refresh-button');
+    if (refreshButton) {
+      vscode.postMessage({ command: 'refresh' });
+      return;
+    }
+
+    var settingsButton = target.closest('#settings-button');
+    if (settingsButton) {
+      vscode.postMessage({ command: 'openSettings' });
+      return;
+    }
+
+    var tabButton = target.closest('.tab');
+    if (tabButton) {
+      var tab = tabButton.getAttribute('data-tab');
+      if (tab) {
+        setActiveTab(tab, true);
+      }
+      return;
+    }
+
+    var providerButton = target.closest('.provider-tab');
+    if (providerButton) {
+      var provider = providerButton.getAttribute('data-provider');
+      if (provider) {
+        setActiveProvider(provider, true);
+      }
+      return;
+    }
+
+    var metricButton = target.closest('.chart-tab[data-role="metric-tab"]');
+    if (metricButton) {
+      var scope = metricButton.getAttribute('data-scope');
+      var key = metricButton.getAttribute('data-key');
+      var metric = metricButton.getAttribute('data-metric');
+
+      if (!scope || !key || !metric) {
+        return;
+      }
+
+      updateMetricButtons(scope, key, metric);
+
+      if (scope === 'panel') {
+        updatePanelMetric(key, metric);
+      } else {
+        state.drilldownMetrics.set(key, metric);
+        renderDrilldownChart(key, metric);
+      }
+      return;
+    }
+
+    var detailButton = target.closest('.detail-button[data-role="detail-button"]');
+    if (detailButton) {
+      var panel = detailButton.closest('.provider-panel');
+      if (!panel) {
+        return;
+      }
+
+      var kind = detailButton.getAttribute('data-kind');
+      var keyValue = detailButton.getAttribute('data-key');
+      if (kind && keyValue) {
+        openDetail(panel, kind, keyValue);
+      }
+      return;
+    }
+
+    var clickableBar = target.closest('.chart-bar-svg.clickable');
+    if (clickableBar) {
+      var barPanel = clickableBar.closest('.provider-panel');
+      if (!barPanel) {
+        return;
+      }
+
+      var barKind = clickableBar.getAttribute('data-click-kind');
+      var barKey = clickableBar.getAttribute('data-detail-key');
+      if (barKind && barKey) {
+        openDetail(barPanel, barKind, barKey);
+      }
+    }
+  }
+
+  function handleMessage(event) {
+    var message = event.data || {};
+
+    switch (message.command) {
+      case 'setLoading':
+        applyLoading(Boolean(message.loading));
+        break;
+      case 'updateData':
+        applyUpdate(message.payload || {});
+        break;
+      case 'hourlyDataResponse':
+        renderDrilldown('hourly', String(message.date || ''), message.data || []);
+        break;
+      case 'dailyDataResponse':
+        renderDrilldown('daily', String(message.month || ''), message.data || []);
+        break;
+      default:
+        break;
+    }
+  }
+
+  document.addEventListener('click', handleClick);
+  window.addEventListener('message', handleMessage);
+
+  setActiveTab(state.activeTab, false);
+  setActiveProvider(state.activeProvider, false);
+  vscode.postMessage({ command: 'ready' });
+})();
+    `;
   }
 
   dispose(): void {

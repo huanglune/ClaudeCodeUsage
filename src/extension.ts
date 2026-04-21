@@ -5,7 +5,7 @@ import { StatusBarManager } from './statusBar';
 import { UsageWebviewProvider } from './webview';
 import { I18n } from './i18n';
 import { initPricing } from './pricing';
-import { ClaudeUsageRecord, ExtensionConfig } from './types';
+import { ClaudeUsageRecord, DashboardPayload, DatasetPayload, ExtensionConfig } from './types';
 
 interface ProviderCache {
   records: ClaudeUsageRecord[];
@@ -86,8 +86,15 @@ export class ClaudeCodeUsageExtension {
   }
 
   private onConfigurationChanged(): void {
+    const previousLanguage = I18n.getCurrentLanguage();
     const config = this.getConfiguration();
     I18n.setLanguage(config.language as any);
+    const currentLanguage = I18n.getCurrentLanguage();
+    if (previousLanguage !== currentLanguage) {
+      // The webview dictionary is injected at skeleton install time, so language changes
+      // should recreate the panel and re-install HTML through the normal show() path.
+      this.webviewProvider.handleLanguageChanged();
+    }
     this.startAutoRefresh();
 
     const claudeKey = this.getClaudeCacheKey(config);
@@ -133,8 +140,12 @@ export class ClaudeCodeUsageExtension {
   private async loadClaudeRecords(
     config: ExtensionConfig,
     forceReload: boolean,
+    resolvedDataDirectory?: string | null,
   ): Promise<{ records: ClaudeUsageRecord[]; dataDirectory: string | null }> {
-    const dataDirectory = await ClaudeDataLoader.findClaudeDataDirectory(config.dataDirectory || undefined);
+    const dataDirectory =
+      resolvedDataDirectory !== undefined
+        ? resolvedDataDirectory
+        : await ClaudeDataLoader.findClaudeDataDirectory(config.dataDirectory || undefined);
     if (!dataDirectory) {
       this.cache.claude = {
         records: [],
@@ -180,86 +191,89 @@ export class ClaudeCodeUsageExtension {
     return this.cache.codex.records;
   }
 
+  private createEmptyDataset(): DatasetPayload {
+    return {
+      sessionData: null,
+      todayData: null,
+      monthData: null,
+      allTimeData: null,
+      dailyDataForMonth: [],
+      dailyDataForAllTime: [],
+      hourlyDataForToday: [],
+    };
+  }
+
+  private computeDataset(records: ClaudeUsageRecord[]): DatasetPayload {
+    return {
+      sessionData: ClaudeDataLoader.getCurrentSessionData([...records]),
+      todayData: ClaudeDataLoader.getTodayData(records),
+      monthData: ClaudeDataLoader.getThisMonthData(records),
+      allTimeData: ClaudeDataLoader.getAllTimeData(records),
+      dailyDataForMonth: ClaudeDataLoader.getDailyDataForMonth(records),
+      dailyDataForAllTime: ClaudeDataLoader.getDailyDataForAllTime(records),
+      hourlyDataForToday: ClaudeDataLoader.getHourlyDataForToday(records),
+    };
+  }
+
   private async refreshData(forceReload = false): Promise<void> {
+    let needLoading = false;
+    let config = this.getConfiguration();
+    let currentDataDirectory: string | null = null;
     try {
       this.statusBar.setLoading(true);
-      this.webviewProvider.setLoading(true);
+      config = this.getConfiguration();
+      const resolvedClaudeDirectory = await ClaudeDataLoader.findClaudeDataDirectory(config.dataDirectory || undefined);
+      currentDataDirectory = resolvedClaudeDirectory;
+      const claudeKey = resolvedClaudeDirectory ?? this.getClaudeCacheKey(config);
+      const codexKey = this.getCodexCacheKey(config);
+      needLoading =
+        forceReload ||
+        this.shouldReload(this.cache.claude, claudeKey, false) ||
+        this.shouldReload(this.cache.codex, codexKey, false);
+      if (needLoading) {
+        this.webviewProvider.setLoading(true);
+      }
 
-      const config = this.getConfiguration();
       const [claudeResult, codexRecords] = await Promise.all([
-        this.loadClaudeRecords(config, forceReload),
+        this.loadClaudeRecords(config, forceReload, resolvedClaudeDirectory),
         this.loadCodexRecords(config, forceReload),
       ]);
-
+      currentDataDirectory = claudeResult.dataDirectory;
       const claudeRecords = claudeResult.records;
-      const mergedRecords = [...claudeRecords, ...codexRecords].sort(
-        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
-      );
+      this.webviewProvider.setProviderRecords(claudeRecords, codexRecords);
 
       const claudeTodayData = ClaudeDataLoader.getTodayData(claudeRecords);
       const codexTodayData = ClaudeDataLoader.getTodayData(codexRecords);
-
-      const sessionData = ClaudeDataLoader.getCurrentSessionData(mergedRecords);
-      const todayData = ClaudeDataLoader.getTodayData(mergedRecords);
-      const monthData = ClaudeDataLoader.getThisMonthData(mergedRecords);
-      const allTimeData = ClaudeDataLoader.getAllTimeData(mergedRecords);
-      const dailyDataForMonth = ClaudeDataLoader.getDailyDataForMonth(mergedRecords);
-      const dailyDataForAllTime = ClaudeDataLoader.getDailyDataForAllTime(mergedRecords);
-      const hourlyDataForToday = ClaudeDataLoader.getHourlyDataForToday(mergedRecords);
-
-      if (mergedRecords.length === 0) {
-        this.statusBar.updateUsageData(
-          claudeTodayData,
-          config.codexEnabled ? codexTodayData : null,
-          'No usage records found. Make sure Claude Code or Codex is generating logs.',
-        );
-        this.webviewProvider.updateData(
-          null,
-          null,
-          null,
-          null,
-          [],
-          [],
-          [],
-          'No usage records found. Make sure Claude Code or Codex is generating logs.',
-          claudeResult.dataDirectory,
-          [],
-        );
-        return;
-      }
+      const payload: DashboardPayload = {
+        claude: this.computeDataset(claudeRecords),
+        codex: this.computeDataset(codexRecords),
+        codexEnabled: config.codexEnabled,
+        dataDirectory: claudeResult.dataDirectory,
+        hasAnyData: claudeRecords.length > 0 || codexRecords.length > 0,
+      };
 
       this.statusBar.updateUsageData(
         claudeTodayData,
         config.codexEnabled ? codexTodayData : null,
       );
-
-      this.webviewProvider.updateData(
-        sessionData,
-        todayData,
-        monthData,
-        allTimeData,
-        dailyDataForMonth,
-        dailyDataForAllTime,
-        hourlyDataForToday,
-        undefined,
-        claudeResult.dataDirectory,
-        mergedRecords,
-      );
+      this.webviewProvider.updateData(payload);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error occurred';
       this.statusBar.updateUsageData(null, null, errorMessage);
-      this.webviewProvider.updateData(
-        null,
-        null,
-        null,
-        null,
-        [],
-        [],
-        [],
-        errorMessage,
-        null,
-        [],
-      );
+      this.webviewProvider.setProviderRecords([], []);
+      const errorPayload: DashboardPayload = {
+        claude: this.createEmptyDataset(),
+        codex: this.createEmptyDataset(),
+        codexEnabled: config.codexEnabled,
+        dataDirectory: currentDataDirectory,
+        hasAnyData: false,
+        error: errorMessage,
+      };
+      this.webviewProvider.updateData(errorPayload);
+    } finally {
+      if (needLoading) {
+        this.webviewProvider.setLoading(false);
+      }
     }
   }
 

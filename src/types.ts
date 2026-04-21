@@ -141,6 +141,29 @@ export interface SessionData extends UsageData {
   sessionEnd: Date;
 }
 
+export interface DatasetPayload {
+  sessionData: SessionData | null;
+  todayData: UsageData | null;
+  monthData: UsageData | null;
+  allTimeData: UsageData | null;
+  dailyDataForMonth: { date: string; data: UsageData }[];
+  dailyDataForAllTime: { date: string; data: UsageData }[];
+  hourlyDataForToday: { hour: string; data: UsageData }[];
+}
+
+export interface DashboardPayload {
+  claude: DatasetPayload;
+  codex: DatasetPayload;
+  codexEnabled: boolean;
+  dataDirectory: string | null;
+  hasAnyData: boolean;
+  error?: string | null;
+}
+
+export type HostToWebviewMessage =
+  | { command: 'setLoading'; loading: boolean }
+  | { command: 'updateData'; payload: DashboardPayload };
+
 export interface ExtensionConfig {
   refreshInterval: number;
   dataDirectory: string;
