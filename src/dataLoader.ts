@@ -2,72 +2,37 @@ import * as fs from 'fs';
 import { readFile } from 'node:fs/promises';
 import * as os from 'os';
 import * as path from 'path';
-// Removed tinyglobby dependency - using native fs instead
-// Removed zod dependency - using native validation instead
 import { calculateCostFromTokens } from './pricing';
+import { formatTzDateHour } from './timezone';
 import { ClaudeUsageRecord, SessionData, UsageData } from './types';
+import {
+  CacheProvider,
+  FileBucketEntry,
+  UsageCache,
+  createEmptyUsage,
+  mergeUsageInto,
+} from './usageCache';
 
-// Constants
 const CLAUDE_CONFIG_DIR_ENV = 'CLAUDE_CONFIG_DIR';
 const CLAUDE_PROJECTS_DIR_NAME = 'projects';
 const DEFAULT_CLAUDE_CODE_PATH = '.claude';
-const USAGE_DATA_GLOB_PATTERN = '**/*.jsonl';
 const USER_HOME_DIR = os.homedir();
-
-// XDG config directory
 const XDG_CONFIG_DIR = process.env.XDG_CONFIG_HOME || path.join(USER_HOME_DIR, '.config');
 const DEFAULT_CLAUDE_CONFIG_PATH = path.join(XDG_CONFIG_DIR, 'claude');
 
-// Native file search function to replace tinyglobby
-async function findJsonlFiles(dir: string): Promise<string[]> {
-  const files: string[] = [];
-
-  async function searchRecursively(currentDir: string) {
-    try {
-      const entries = await fs.promises.readdir(currentDir, { withFileTypes: true });
-
-      for (const entry of entries) {
-        const fullPath = path.join(currentDir, entry.name);
-
-        if (entry.isDirectory()) {
-          await searchRecursively(fullPath);
-        } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
-          files.push(fullPath);
-        }
-      }
-    } catch (error) {
-      // Ignore permission errors and continue
-      console.warn(`Cannot read directory ${currentDir}:`, error);
-    }
-  }
-
-  await searchRecursively(dir);
-  return files;
-}
-
-// Native validation function to replace zod
+// 原本 zod 的最小替代，保证 JSON 行的 shape 符合 ClaudeUsageRecord。
 function validateUsageRecord(data: any): data is ClaudeUsageRecord {
-  // Basic structure validation
   if (!data || typeof data !== 'object') return false;
-
-  // Required timestamp
   if (typeof data.timestamp !== 'string') return false;
-
-  // Required message with usage
   if (!data.message || typeof data.message !== 'object') return false;
   if (!data.message.usage || typeof data.message.usage !== 'object') return false;
 
   const usage = data.message.usage;
-
-  // Required token fields must be numbers
   if (typeof usage.input_tokens !== 'number') return false;
   if (typeof usage.output_tokens !== 'number') return false;
-
-  // Optional fields validation
   if (usage.cache_creation_input_tokens !== undefined && typeof usage.cache_creation_input_tokens !== 'number') return false;
   if (usage.cache_read_input_tokens !== undefined && typeof usage.cache_read_input_tokens !== 'number') return false;
 
-  // Optional fields validation
   if (data.message.model !== undefined && typeof data.message.model !== 'string') return false;
   if (data.message.id !== undefined && typeof data.message.id !== 'string') return false;
   if (data.costUSD !== undefined && typeof data.costUSD !== 'number') return false;
@@ -82,7 +47,7 @@ export class ClaudeDataLoader {
     const paths: string[] = [];
     const normalizedPaths = new Set<string>();
 
-    // Check environment variable first (supports comma-separated paths)
+    // 环境变量优先，支持逗号分隔的多条路径
     const envPaths = (process.env[CLAUDE_CONFIG_DIR_ENV] ?? '').trim();
     if (envPaths !== '') {
       const envPathList = envPaths
@@ -103,9 +68,7 @@ export class ClaudeDataLoader {
       }
     }
 
-    // Add default paths if they exist
     const defaultPaths = [DEFAULT_CLAUDE_CONFIG_PATH, path.join(USER_HOME_DIR, DEFAULT_CLAUDE_CODE_PATH)];
-
     for (const defaultPath of defaultPaths) {
       const normalizedPath = path.resolve(defaultPath);
       if (fs.existsSync(normalizedPath) && fs.statSync(normalizedPath).isDirectory()) {
@@ -134,168 +97,71 @@ export class ClaudeDataLoader {
     const claudePaths = this.getClaudePaths();
     return claudePaths.length > 0 ? claudePaths[0] : null;
   }
+}
 
-  static async loadUsageRecords(dataDirectory?: string): Promise<ClaudeUsageRecord[]> {
-    try {
-      const claudePaths = dataDirectory ? [dataDirectory] : this.getClaudePaths();
-      const allFiles: string[] = [];
+export interface MergedBuckets {
+  daily: Record<string, UsageData>;
+  hourly: Record<string, UsageData>;
+}
 
-      for (const claudePath of claudePaths) {
-        const claudeDir = path.join(claudePath, CLAUDE_PROJECTS_DIR_NAME);
-        if (fs.existsSync(claudeDir)) {
-          const files = await findJsonlFiles(claudeDir);
-          allFiles.push(...files);
-        }
-      }
+/** 把一段 records 摊到 per-file 的 daily / hourly 桶里（含 intra-file 去重）。 */
+export function computePerFileBuckets(
+  records: ClaudeUsageRecord[],
+  timeZone: string,
+): {
+  daily: Record<string, UsageData>;
+  hourly: Record<string, UsageData>;
+} {
+  const daily: Record<string, UsageData> = {};
+  const hourly: Record<string, UsageData> = {};
+  const seen = new Set<string>();
 
-      const sortedFiles = await this.sortFilesByTimestamp(allFiles);
-      const processedHashes = new Set<string>();
-      const records: ClaudeUsageRecord[] = [];
+  for (const record of records) {
+    if (!record.message.usage || !record.message.model) continue;
+    const model = record.message.model;
+    if (model === '<synthetic>' || record.isApiErrorMessage) continue;
 
-      for (const file of sortedFiles) {
-        try {
-          const content = await readFile(file, 'utf-8');
-          const lines = content
-            .trim()
-            .split('\n')
-            .filter((line) => line.trim() !== '');
+    const usage = record.message.usage;
+    const reasoningTokens = usage.reasoning_output_tokens || 0;
+    const regularTokens =
+      usage.input_tokens +
+      usage.output_tokens +
+      (usage.cache_creation_input_tokens || 0) +
+      (usage.cache_read_input_tokens || 0);
+    if (regularTokens + reasoningTokens === 0) continue;
 
-          for (const line of lines) {
-            try {
-              const parsed = JSON.parse(line) as unknown;
-
-              if (!validateUsageRecord(parsed)) {
-                continue;
-              }
-
-              const data = parsed;
-              const uniqueHash = this.createUniqueHash(data);
-
-              if (uniqueHash && processedHashes.has(uniqueHash)) {
-                continue;
-              }
-
-              if (uniqueHash) {
-                processedHashes.add(uniqueHash);
-              }
-
-              records.push({ ...(data as ClaudeUsageRecord), provider: 'claude' });
-            } catch (parseError) {
-              console.warn(`Failed to parse line in ${file}:`, parseError);
-            }
-          }
-        } catch (fileError) {
-          console.warn(`Failed to read file ${file}:`, fileError);
-        }
-      }
-
-      return records;
-    } catch (error) {
-      console.error('Error loading usage records:', error);
-      return [];
-    }
-  }
-
-  private static createUniqueHash(data: any): string | null {
-    const messageId = data.message?.id;
-    const requestId = data.requestId;
-
-    if (!messageId && !requestId) {
-      return null;
+    // intra-file 去重：同一条消息出现两次只算一次（Claude 日志可能有）
+    const dedupKey =
+      record.message.id && record.requestId ? `${record.message.id}:${record.requestId}` : null;
+    if (dedupKey) {
+      if (seen.has(dedupKey)) continue;
+      seen.add(dedupKey);
     }
 
-    return `${messageId || 'no-msg'}-${requestId || 'no-req'}`;
-  }
+    const recordTime = new Date(record.timestamp);
+    const tms = recordTime.getTime();
+    if (Number.isNaN(tms)) continue;
 
-  private static async getEarliestTimestamp(filePath: string): Promise<Date | null> {
-    try {
-      const content = await readFile(filePath, 'utf-8');
-      const lines = content.trim().split('\n');
+    const { date: dateKey, hour } = formatTzDateHour(recordTime, timeZone);
+    const hourKey = `${dateKey}:${hour}`;
+    const provider: 'claude' | 'codex' = record.provider === 'codex' ? 'codex' : 'claude';
+    const calculatedCost = calculateCostFromTokens(usage, model);
 
-      for (const line of lines) {
-        if (line.trim() === '') continue;
+    if (!daily[dateKey]) daily[dateKey] = createEmptyUsage();
+    if (!hourly[hourKey]) hourly[hourKey] = createEmptyUsage();
 
-        try {
-          const json = JSON.parse(line) as Record<string, unknown>;
-          if (typeof json.timestamp === 'string') {
-            const date = new Date(json.timestamp);
-            if (!isNaN(date.getTime())) {
-              return date;
-            }
-          }
-        } catch {
-          // Skip invalid lines
-        }
-      }
+    for (const bucket of [daily[dateKey], hourly[hourKey]]) {
+      bucket.totalInputTokens += usage.input_tokens;
+      bucket.totalOutputTokens += usage.output_tokens;
+      bucket.totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
+      bucket.totalCacheReadTokens += usage.cache_read_input_tokens || 0;
+      bucket.totalReasoningTokens += reasoningTokens;
+      bucket.totalCost += calculatedCost;
+      bucket.messageCount += 1;
 
-      return null;
-    } catch {
-      return null;
-    }
-  }
-
-  private static async sortFilesByTimestamp(files: string[]): Promise<string[]> {
-    const filesWithTimestamps = await Promise.all(
-      files.map(async (file) => {
-        const timestamp = await this.getEarliestTimestamp(file);
-        return {
-          file,
-          timestamp: timestamp || new Date(0),
-        };
-      })
-    );
-
-    return filesWithTimestamps.sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime()).map((item) => item.file);
-  }
-
-  static calculateUsageData(records: ClaudeUsageRecord[]): UsageData {
-    const data: UsageData = {
-      totalInputTokens: 0,
-      totalOutputTokens: 0,
-      totalCacheCreationTokens: 0,
-      totalCacheReadTokens: 0,
-      totalReasoningTokens: 0,
-      totalCost: 0,
-      messageCount: 0,
-      modelBreakdown: {},
-    };
-
-    for (const record of records) {
-      // Only count records with usage and model (typically assistant type)
-      if (!record.message.usage || !record.message.model) {
-        continue;
-      }
-
-      const usage = record.message.usage;
-      const model = record.message.model;
-      const provider = record.provider === 'codex' ? 'codex' : 'claude';
-
-      // Skip error records and invalid records
-      if (model === '<synthetic>' || record.isApiErrorMessage) {
-        continue;
-      }
-
-      // Skip records where all tokens are 0
-      const tokenSum = usage.input_tokens + usage.output_tokens + (usage.cache_creation_input_tokens || 0) + (usage.cache_read_input_tokens || 0);
-      const reasoningTokens = usage.reasoning_output_tokens || 0;
-      const totalTokenSum = tokenSum + reasoningTokens;
-      if (totalTokenSum === 0) {
-        continue;
-      }
-
-      // Calculate cost using new pricing model
-      const calculatedCost = calculateCostFromTokens(usage, model);
-
-      data.totalInputTokens += usage.input_tokens;
-      data.totalOutputTokens += usage.output_tokens;
-      data.totalCacheCreationTokens += usage.cache_creation_input_tokens || 0;
-      data.totalCacheReadTokens += usage.cache_read_input_tokens || 0;
-      data.totalReasoningTokens += reasoningTokens;
-      data.totalCost += calculatedCost;
-      data.messageCount++;
-
-      if (!data.modelBreakdown[model]) {
-        data.modelBreakdown[model] = {
+      let modelData = bucket.modelBreakdown[model];
+      if (!modelData) {
+        modelData = {
           inputTokens: 0,
           outputTokens: 0,
           cacheCreationTokens: 0,
@@ -305,236 +171,245 @@ export class ClaudeDataLoader {
           count: 0,
           provider,
         };
+        bucket.modelBreakdown[model] = modelData;
       }
-
-      const modelData = data.modelBreakdown[model];
       modelData.inputTokens += usage.input_tokens;
       modelData.outputTokens += usage.output_tokens;
       modelData.cacheCreationTokens += usage.cache_creation_input_tokens || 0;
       modelData.cacheReadTokens += usage.cache_read_input_tokens || 0;
       modelData.reasoningTokens += reasoningTokens;
       modelData.cost += calculatedCost;
-      modelData.count++;
+      modelData.count += 1;
     }
-
-    return data;
   }
 
-  static getCurrentSessionData(records: ClaudeUsageRecord[]): SessionData | null {
-    if (records.length === 0) {
-      return null;
+  return { daily, hourly };
+}
+
+/**
+ * 只读 cache、不做 stat/parse，把所有 per-file entry merge 成 MergedBuckets。
+ * 给 stale-while-revalidate 的 cache-first 首屏用。
+ */
+export function mergeAllCacheEntries(
+  cache: { entries: (p: CacheProvider) => Array<[string, FileBucketEntry]> },
+  provider: CacheProvider,
+): MergedBuckets {
+  const merged: MergedBuckets = { daily: {}, hourly: {} };
+  for (const [, entry] of cache.entries(provider)) {
+    mergeBuckets(merged, entry);
+  }
+  return merged;
+}
+
+/** 把 per-file buckets 合并进全局 merged buckets。 */
+export function mergeBuckets(into: MergedBuckets, entry: FileBucketEntry): void {
+  for (const [date, data] of Object.entries(entry.daily)) {
+    if (!into.daily[date]) into.daily[date] = createEmptyUsage();
+    mergeUsageInto(into.daily[date], data);
+  }
+  for (const [hour, data] of Object.entries(entry.hourly)) {
+    if (!into.hourly[hour]) into.hourly[hour] = createEmptyUsage();
+    mergeUsageInto(into.hourly[hour], data);
+  }
+}
+
+/** 从 merged buckets + 当前时间物化出 DatasetPayload 需要的 7 种视图。 */
+export function materializeDataset(
+  merged: MergedBuckets,
+  timeZone: string,
+): {
+  sessionData: SessionData | null;
+  todayData: UsageData;
+  monthData: UsageData;
+  allTimeData: UsageData;
+  dailyDataForMonth: { date: string; data: UsageData }[];
+  dailyDataForAllTime: { date: string; data: UsageData }[];
+  hourlyDataForToday: { hour: string; data: UsageData }[];
+} {
+  const { date: todayKey } = formatTzDateHour(new Date(), timeZone);
+  const thisMonthPrefix = todayKey.slice(0, 7);
+
+  const todayData = merged.daily[todayKey] ? cloneUsage(merged.daily[todayKey]) : createEmptyUsage();
+  const monthData = createEmptyUsage();
+  const allTimeData = createEmptyUsage();
+  const dailyDataForMonth: { date: string; data: UsageData }[] = [];
+  const monthlyAcc: Record<string, UsageData> = {};
+
+  for (const [date, data] of Object.entries(merged.daily)) {
+    mergeUsageInto(allTimeData, data);
+    const monthPart = date.slice(0, 7);
+    if (!monthlyAcc[monthPart]) monthlyAcc[monthPart] = createEmptyUsage();
+    mergeUsageInto(monthlyAcc[monthPart], data);
+    if (monthPart === thisMonthPrefix) {
+      mergeUsageInto(monthData, data);
+      dailyDataForMonth.push({ date, data });
     }
+  }
+  dailyDataForMonth.sort((a, b) => b.date.localeCompare(a.date));
 
-    // Sort records by timestamp
-    const sortedRecords = records.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+  const dailyDataForAllTime = Object.entries(monthlyAcc)
+    .map(([month, data]) => ({ date: `${month}-01`, data }))
+    .sort((a, b) => b.date.localeCompare(a.date));
 
-    const now = new Date();
-    const sessionRecords = sortedRecords.filter((record) => {
-      const recordTime = new Date(record.timestamp);
-      const timeDiff = now.getTime() - recordTime.getTime();
-      return timeDiff <= 5 * 60 * 60 * 1000; // 5 hours in milliseconds
-    });
-
-    if (sessionRecords.length === 0) {
-      return null;
+  const hourlyDataForToday: { hour: string; data: UsageData }[] = [];
+  const todayPrefix = `${todayKey}:`;
+  for (const [key, data] of Object.entries(merged.hourly)) {
+    if (key.startsWith(todayPrefix)) {
+      hourlyDataForToday.push({ hour: `${key.slice(todayPrefix.length)}:00`, data });
     }
+  }
+  hourlyDataForToday.sort((a, b) => a.hour.localeCompare(b.hour));
 
-    const usageData = this.calculateUsageData(sessionRecords);
-    const sessionStart = new Date(sessionRecords[0].timestamp);
-    const sessionEnd = new Date(sessionRecords[sessionRecords.length - 1].timestamp);
+  return {
+    sessionData: null, // L2 已不再计算 session（webview 当前未使用）
+    todayData,
+    monthData,
+    allTimeData,
+    dailyDataForMonth,
+    dailyDataForAllTime,
+    hourlyDataForToday,
+  };
+}
 
-    return {
-      ...usageData,
-      sessionStart,
-      sessionEnd,
-    };
+/** drilldown：某天的按小时切片。 */
+export function hourlyForDateFromBuckets(
+  merged: MergedBuckets,
+  dateString: string,
+): { hour: string; data: UsageData }[] {
+  const prefix = `${dateString}:`;
+  const out: { hour: string; data: UsageData }[] = [];
+  for (const [key, data] of Object.entries(merged.hourly)) {
+    if (key.startsWith(prefix)) {
+      out.push({ hour: `${key.slice(prefix.length)}:00`, data });
+    }
+  }
+  out.sort((a, b) => a.hour.localeCompare(b.hour));
+  return out;
+}
+
+/** drilldown：某月的按天切片（monthDateString 形如 "YYYY-MM-01"）。 */
+export function dailyForMonthFromBuckets(
+  merged: MergedBuckets,
+  monthDateString: string,
+): { date: string; data: UsageData }[] {
+  const prefix = `${monthDateString.slice(0, 7)}-`;
+  const out: { date: string; data: UsageData }[] = [];
+  for (const [date, data] of Object.entries(merged.daily)) {
+    if (date.startsWith(prefix)) {
+      out.push({ date, data });
+    }
+  }
+  out.sort((a, b) => a.date.localeCompare(b.date));
+  return out;
+}
+
+function cloneUsage(u: UsageData): UsageData {
+  const res = createEmptyUsage();
+  mergeUsageInto(res, u);
+  return res;
+}
+
+/**
+ * Cache-aware Claude 文件加载：
+ *   1. 递归扫描 JSONL 文件
+ *   2. stat 每个文件，(mtimeMs, size) 命中就用缓存 bucket
+ *   3. miss 的 parse + 计算 per-file buckets 写回缓存
+ *   4. prune 缓存里已消失的文件
+ *   5. merge 出 MergedBuckets
+ */
+export async function loadClaudeBucketsWithCache(
+  dataDirectory: string,
+  cache: UsageCache,
+  timeZone: string,
+): Promise<{ merged: MergedBuckets; stats: { fileCount: number; missCount: number; hitCount: number } }> {
+  const provider: CacheProvider = 'claude';
+  const claudeDir = path.join(dataDirectory, CLAUDE_PROJECTS_DIR_NAME);
+  if (!fs.existsSync(claudeDir)) {
+    return { merged: { daily: {}, hourly: {} }, stats: { fileCount: 0, missCount: 0, hitCount: 0 } };
   }
 
-  static getTodayData(records: ClaudeUsageRecord[]): UsageData {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
+  const allFiles: string[] = [];
+  await collectJsonlFiles(claudeDir, allFiles);
+  const presentSet = new Set(allFiles);
+  cache.pruneMissing(provider, presentSet);
 
-    const todayRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= today;
-    });
+  const stats = { fileCount: allFiles.length, missCount: 0, hitCount: 0 };
 
-    return this.calculateUsageData(todayRecords);
-  }
-
-  static getThisMonthData(records: ClaudeUsageRecord[]): UsageData {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const monthRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= monthStart;
-    });
-
-    return this.calculateUsageData(monthRecords);
-  }
-
-  static getDailyDataForMonth(records: ClaudeUsageRecord[]): { date: string; data: UsageData }[] {
-    const now = new Date();
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-
-    const monthRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= monthStart;
-    });
-
-    // Group records by date
-    const recordsByDate: Record<string, ClaudeUsageRecord[]> = {};
-
-    monthRecords.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const dateKey = recordDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
-      if (!recordsByDate[dateKey]) {
-        recordsByDate[dateKey] = [];
+  const missFiles: Array<{ file: string; mtimeMs: number; size: number }> = [];
+  await Promise.all(
+    allFiles.map(async (file) => {
+      try {
+        const st = await fs.promises.stat(file);
+        const existing = cache.getEntry(provider, file);
+        if (existing && existing.mtimeMs === st.mtimeMs && existing.size === st.size) {
+          stats.hitCount += 1;
+          return;
+        }
+        missFiles.push({ file, mtimeMs: st.mtimeMs, size: st.size });
+      } catch {
+        /* 文件消失或无权限，跳过 */
       }
-      recordsByDate[dateKey].push(record);
-    });
+    }),
+  );
+  stats.missCount = missFiles.length;
 
-    // Calculate usage data for each day and sort by date (newest first)
-    const dailyData = Object.entries(recordsByDate)
-      .map(([date, dayRecords]) => ({
-        date,
-        data: this.calculateUsageData(dayRecords),
-      }))
-      .sort((a, b) => b.date.localeCompare(a.date));
-
-    return dailyData;
+  const CONCURRENCY = 16;
+  for (let i = 0; i < missFiles.length; i += CONCURRENCY) {
+    const batch = missFiles.slice(i, i + CONCURRENCY);
+    await Promise.all(
+      batch.map(async ({ file, mtimeMs, size }) => {
+        try {
+          const records = await parseClaudeJsonlRecords(file);
+          const buckets = computePerFileBuckets(records, timeZone);
+          cache.setEntry(provider, file, { mtimeMs, size, daily: buckets.daily, hourly: buckets.hourly });
+        } catch {
+          cache.setEntry(provider, file, { mtimeMs, size, daily: {}, hourly: {} });
+        }
+      }),
+    );
   }
 
-  static getAllTimeData(records: ClaudeUsageRecord[]): UsageData {
-    return this.calculateUsageData(records);
+  const merged: MergedBuckets = { daily: {}, hourly: {} };
+  for (const [, entry] of cache.entries(provider)) {
+    mergeBuckets(merged, entry);
   }
 
-  static getDailyDataForSpecificMonth(records: ClaudeUsageRecord[], monthDateString: string): { date: string; data: UsageData }[] {
-    // monthDateString format: YYYY-MM-01 (first day of the month)
-    const monthDate = new Date(monthDateString);
-    const monthStart = new Date(monthDate.getFullYear(), monthDate.getMonth(), 1);
-    const monthEnd = new Date(monthDate.getFullYear(), monthDate.getMonth() + 1, 0); // Last day of the month
+  return { merged, stats };
+}
 
-    const monthRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= monthStart && recordDate <= monthEnd;
-    });
-
-    // Group records by date
-    const recordsByDate: Record<string, ClaudeUsageRecord[]> = {};
-
-    monthRecords.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const dateKey = recordDate.toISOString().split('T')[0]; // YYYY-MM-DD
-
-      if (!recordsByDate[dateKey]) {
-        recordsByDate[dateKey] = [];
-      }
-      recordsByDate[dateKey].push(record);
-    });
-
-    // Convert to array and sort by date
-    return Object.keys(recordsByDate)
-      .sort()
-      .map((dateKey) => ({
-        date: dateKey,
-        data: this.calculateUsageData(recordsByDate[dateKey]),
-      }));
+async function parseClaudeJsonlRecords(file: string): Promise<ClaudeUsageRecord[]> {
+  const content = await readFile(file, 'utf-8');
+  const lines = content
+    .trim()
+    .split('\n')
+    .filter((line) => line.trim() !== '');
+  const out: ClaudeUsageRecord[] = [];
+  for (const line of lines) {
+    try {
+      const parsed = JSON.parse(line) as unknown;
+      if (!validateUsageRecord(parsed)) continue;
+      out.push({ ...(parsed as ClaudeUsageRecord), provider: 'claude' });
+    } catch {
+      /* 跳过单行解析错误 */
+    }
   }
+  return out;
+}
 
-  static getDailyDataForAllTime(records: ClaudeUsageRecord[]): { date: string; data: UsageData }[] {
-    // Group all records by month for all-time view
-    const recordsByMonth: Record<string, ClaudeUsageRecord[]> = {};
-
-    records.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const monthKey = `${recordDate.getFullYear()}-${String(recordDate.getMonth() + 1).padStart(2, '0')}`; // YYYY-MM
-
-      if (!recordsByMonth[monthKey]) {
-        recordsByMonth[monthKey] = [];
-      }
-      recordsByMonth[monthKey].push(record);
-    });
-
-    // Calculate usage data for each month and sort by month (newest first)
-    const monthlyData = Object.entries(recordsByMonth)
-      .map(([month, monthRecords]) => ({
-        date: month + '-01', // Set to first day of month for date sorting
-        data: this.calculateUsageData(monthRecords),
-      }))
-      .sort((a, b) => b.date.localeCompare(a.date));
-
-    return monthlyData;
-  }
-
-  static getHourlyDataForToday(records: ClaudeUsageRecord[]): { hour: string; data: UsageData }[] {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    const todayRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= today;
-    });
-
-    // Group records by hour
-    const recordsByHour: Record<string, ClaudeUsageRecord[]> = {};
-
-    todayRecords.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const hourKey = `${recordDate.getHours().toString().padStart(2, '0')}:00`; // HH:00 format
-
-      if (!recordsByHour[hourKey]) {
-        recordsByHour[hourKey] = [];
-      }
-      recordsByHour[hourKey].push(record);
-    });
-
-    // Calculate usage data for each hour and sort by hour
-    const hourlyData = Object.entries(recordsByHour)
-      .map(([hour, hourRecords]) => ({
-        hour,
-        data: this.calculateUsageData(hourRecords),
-      }))
-      .sort((a, b) => a.hour.localeCompare(b.hour));
-
-    return hourlyData;
-  }
-
-  static getHourlyDataForDate(records: ClaudeUsageRecord[], dateString: string): { hour: string; data: UsageData }[] {
-    const targetDate = new Date(dateString);
-    targetDate.setHours(0, 0, 0, 0);
-
-    const nextDate = new Date(targetDate);
-    nextDate.setDate(nextDate.getDate() + 1);
-
-    const dateRecords = records.filter((record) => {
-      const recordDate = new Date(record.timestamp);
-      return recordDate >= targetDate && recordDate < nextDate;
-    });
-
-    // Group records by hour
-    const recordsByHour: Record<string, ClaudeUsageRecord[]> = {};
-
-    dateRecords.forEach((record) => {
-      const recordDate = new Date(record.timestamp);
-      const hourKey = `${recordDate.getHours().toString().padStart(2, '0')}:00`; // HH:00 format
-
-      if (!recordsByHour[hourKey]) {
-        recordsByHour[hourKey] = [];
-      }
-      recordsByHour[hourKey].push(record);
-    });
-
-    // Calculate usage data for each hour and sort by hour
-    const hourlyData = Object.entries(recordsByHour)
-      .map(([hour, hourRecords]) => ({
-        hour,
-        data: this.calculateUsageData(hourRecords),
-      }))
-      .sort((a, b) => a.hour.localeCompare(b.hour));
-
-    return hourlyData;
+async function collectJsonlFiles(root: string, sink: string[]): Promise<void> {
+  try {
+    const entries = await fs.promises.readdir(root, { withFileTypes: true });
+    await Promise.all(
+      entries.map(async (entry) => {
+        const p = path.join(root, entry.name);
+        if (entry.isDirectory()) {
+          await collectJsonlFiles(p, sink);
+        } else if (entry.isFile() && entry.name.endsWith('.jsonl')) {
+          sink.push(p);
+        }
+      }),
+    );
+  } catch {
+    /* 忽略权限错误 */
   }
 }

@@ -52,6 +52,20 @@ export function _setPricingForTests(value: Record<string, ModelPricing>): void {
   pricing = value;
 }
 
+// 用于 usage 缓存的失效判定：pricing 改变后已缓存的 cost 数字都要作废。
+// 取 key 数量 + 前几个 key 的核心价格即可，足够 detect 快照级变更。
+export function getPricingFingerprint(): string {
+  const keys = Object.keys(pricing).sort();
+  const sample = keys
+    .slice(0, 5)
+    .map((k) => {
+      const p = pricing[k];
+      return `${k}:${p.input_cost_per_token ?? 0}:${p.output_cost_per_token ?? 0}`;
+    })
+    .join('|');
+  return `${keys.length}|${sample}`;
+}
+
 // Minimal structural type for the slice of ExtensionContext we touch.
 // Keeps this module vscode-import-free at module load.
 interface MinimalContext {

@@ -1,8 +1,11 @@
 import * as vscode from 'vscode';
-import { ClaudeDataLoader } from './dataLoader';
+import {
+  MergedBuckets,
+  dailyForMonthFromBuckets,
+  hourlyForDateFromBuckets,
+} from './dataLoader';
 import { I18n } from './i18n';
 import {
-  ClaudeUsageRecord,
   DashboardPayload,
   HostToWebviewMessage,
 } from './types';
@@ -16,9 +19,9 @@ export class UsageWebviewProvider {
   private lastPayload: DashboardPayload | null = null;
   private currentTab: PeriodTab = 'today';
   private providerTab: Provider = 'claude';
-  private providerRecords: Record<Provider, ClaudeUsageRecord[]> = {
-    claude: [],
-    codex: [],
+  private providerBuckets: Record<Provider, MergedBuckets> = {
+    claude: { daily: {}, hourly: {} },
+    codex: { daily: {}, hourly: {} },
   };
 
   constructor(private context: vscode.ExtensionContext) {
@@ -69,10 +72,10 @@ export class UsageWebviewProvider {
     }
   }
 
-  setProviderRecords(claudeRecords: ClaudeUsageRecord[], codexRecords: ClaudeUsageRecord[]): void {
-    this.providerRecords = {
-      claude: claudeRecords,
-      codex: codexRecords,
+  setProviderBuckets(claudeBuckets: MergedBuckets, codexBuckets: MergedBuckets): void {
+    this.providerBuckets = {
+      claude: claudeBuckets,
+      codex: codexBuckets,
     };
   }
 
@@ -83,7 +86,12 @@ export class UsageWebviewProvider {
 
   setLoading(loading: boolean): void {
     this.isLoading = loading;
-    this.postMessage({ command: 'setLoading', loading });
+    this.postMessage({ command: 'setLoading', loading: this.shouldShowLoadingOverlay() });
+  }
+
+  private shouldShowLoadingOverlay(): boolean {
+    // 已经渲染过一次数据就静默刷新，避免后台轮询打扰用户
+    return this.isLoading && !this.lastPayload;
   }
 
   private postMessage(message: HostToWebviewMessage): void {
@@ -97,7 +105,7 @@ export class UsageWebviewProvider {
     if (this.lastPayload) {
       this.postMessage({ command: 'updateData', payload: this.lastPayload });
     }
-    this.postMessage({ command: 'setLoading', loading: this.isLoading });
+    this.postMessage({ command: 'setLoading', loading: this.shouldShowLoadingOverlay() });
   }
 
   private handleWebviewMessage(message: any): void {
@@ -127,8 +135,8 @@ export class UsageWebviewProvider {
           return;
         }
 
-        const hourlyData = ClaudeDataLoader.getHourlyDataForDate(
-          this.providerRecords[this.providerTab],
+        const hourlyData = hourlyForDateFromBuckets(
+          this.providerBuckets[this.providerTab],
           dateString,
         );
 
@@ -145,8 +153,8 @@ export class UsageWebviewProvider {
           return;
         }
 
-        const dailyData = ClaudeDataLoader.getDailyDataForSpecificMonth(
-          this.providerRecords[this.providerTab],
+        const dailyData = dailyForMonthFromBuckets(
+          this.providerBuckets[this.providerTab],
           monthString,
         );
 
@@ -331,6 +339,7 @@ export class UsageWebviewProvider {
       .btn-secondary:hover {
         background: var(--vscode-button-secondaryHoverBackground);
       }
+
 
       .error-banner {
         margin-bottom: 12px;
@@ -651,11 +660,28 @@ export class UsageWebviewProvider {
         border: none;
         color: var(--vscode-foreground);
         cursor: pointer;
-        padding: 2px 6px;
+        padding: 4px;
+        border-radius: 4px;
+        opacity: 0.55;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        transition: opacity 0.15s ease, background-color 0.15s ease, transform 0.2s ease;
+      }
+
+      .detail-button:hover {
+        background: color-mix(in srgb, var(--vscode-foreground) 12%, transparent);
+        opacity: 1;
       }
 
       .detail-button.expanded {
         transform: rotate(180deg);
+        opacity: 1;
+      }
+
+      .chevron-icon {
+        display: block;
+        pointer-events: none;
       }
 
       .detail-row > td {
@@ -798,6 +824,32 @@ export class UsageWebviewProvider {
     return '$' + num.toFixed(decimalPlaces);
   }
 
+  function formatInteger(value) {
+    var num = Math.round(Number(value || 0));
+    return num.toLocaleString();
+  }
+
+  function createChevronSvg() {
+    var svgNs = 'http://www.w3.org/2000/svg';
+    var svg = document.createElementNS(svgNs, 'svg');
+    svg.setAttribute('class', 'chevron-icon');
+    svg.setAttribute('viewBox', '0 0 12 12');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '12');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '1.6');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+
+    var polyline = document.createElementNS(svgNs, 'polyline');
+    polyline.setAttribute('points', '3 5 6 8 9 5');
+    svg.appendChild(polyline);
+
+    return svg;
+  }
+
   function escapeHtml(value) {
     return String(value)
       .replace(/&/g, '&amp;')
@@ -877,21 +929,33 @@ export class UsageWebviewProvider {
     };
   }
 
+  function parseDateKey(value) {
+    // NOTE: 这段脚本整体在 TS 模板字符串里，运行时 template literal 会吞掉 \\d 的反斜杠；
+    // 必须用 \\\\d 让 TS 产出 \\d 字面量给浏览器再当 regex digit-class 解析。
+    var match = /^(\\d{4})-(\\d{2})-(\\d{2})$/.exec(String(value || ''));
+    if (!match) {
+      return null;
+    }
+    return { year: match[1], month: match[2], day: match[3] };
+  }
+
   function chartLabelForPoint(period, point) {
     if (period === 'today') {
       return point.hour || '';
     }
 
-    var date = new Date(point.date || '');
-    if (isNaN(date.getTime())) {
+    var parsed = parseDateKey(point.date);
+    if (!parsed) {
       return String(point.date || '');
     }
 
     if (period === 'all') {
-      return String(date.getFullYear()) + '/' + String(date.getMonth() + 1).padStart(2, '0');
+      // YY/MM 比 YYYY/MM 省 2 个字符，密集场景下避免重叠；table 里仍用完整年份。
+      return parsed.year.slice(2) + '/' + parsed.month;
     }
 
-    return String(date.getMonth() + 1) + '/' + String(date.getDate());
+    // period === 'month'：tab 已点明"本月"，省年份；MM-DD 与表格一致，信息最全且不重叠。
+    return parsed.month + '-' + parsed.day;
   }
 
   function tableLabelForPoint(period, point) {
@@ -899,16 +963,17 @@ export class UsageWebviewProvider {
       return point.hour || '';
     }
 
-    var date = new Date(point.date || '');
-    if (isNaN(date.getTime())) {
+    var parsed = parseDateKey(point.date);
+    if (!parsed) {
       return String(point.date || '');
     }
 
     if (period === 'all') {
-      return String(date.getFullYear()) + '/' + String(date.getMonth() + 1).padStart(2, '0');
+      return parsed.year + '/' + parsed.month;
     }
 
-    return date.toLocaleDateString();
+    // period === 'month'：tab 已经点明"本月"，省略年份；MM-DD 够短又不丢辨识度。
+    return parsed.month + '-' + parsed.day;
   }
 
   function sortForChart(period, points) {
@@ -1086,12 +1151,12 @@ export class UsageWebviewProvider {
     var grid = document.createElement('div');
     grid.className = 'summary-grid';
 
-    appendSummaryItem(grid, metricLabel('cost'), formatCurrency(usageData.totalCost || 0), true);
-    appendSummaryItem(grid, metricLabel('messages'), formatNumber(usageData.messageCount || 0), false);
-    appendSummaryItem(grid, metricLabel('inputTokens'), formatNumber(usageData.totalInputTokens || 0), false);
-    appendSummaryItem(grid, metricLabel('outputTokens'), formatNumber(usageData.totalOutputTokens || 0), false);
-    appendSummaryItem(grid, metricLabel('cacheCreation'), formatNumber(usageData.totalCacheCreationTokens || 0), false);
-    appendSummaryItem(grid, metricLabel('cacheRead'), formatNumber(usageData.totalCacheReadTokens || 0), false);
+    appendSummaryItem(grid, 'cost', metricLabel('cost'), usageData.totalCost || 0);
+    appendSummaryItem(grid, 'messages', metricLabel('messages'), usageData.messageCount || 0);
+    appendSummaryItem(grid, 'inputTokens', metricLabel('inputTokens'), usageData.totalInputTokens || 0);
+    appendSummaryItem(grid, 'outputTokens', metricLabel('outputTokens'), usageData.totalOutputTokens || 0);
+    appendSummaryItem(grid, 'cacheCreation', metricLabel('cacheCreation'), usageData.totalCacheCreationTokens || 0);
+    appendSummaryItem(grid, 'cacheRead', metricLabel('cacheRead'), usageData.totalCacheReadTokens || 0);
 
     root.appendChild(grid);
 
@@ -1149,7 +1214,7 @@ export class UsageWebviewProvider {
     summarySlot.appendChild(root);
   }
 
-  function appendSummaryItem(grid, labelText, valueText, isCost) {
+  function appendSummaryItem(grid, metricKey, labelText, rawValue) {
     var item = document.createElement('div');
     item.className = 'summary-item';
 
@@ -1158,8 +1223,11 @@ export class UsageWebviewProvider {
     label.textContent = labelText;
 
     var value = document.createElement('div');
+    var isCost = metricKey === 'cost';
     value.className = isCost ? 'value cost' : 'value';
-    value.textContent = valueText;
+
+    var formatter = isCost ? formatCurrency : formatInteger;
+    value.textContent = formatter(Number(rawValue || 0));
 
     item.appendChild(label);
     item.appendChild(value);
@@ -1221,14 +1289,14 @@ export class UsageWebviewProvider {
       return '<div class="no-chart-data">' + escapeHtml(popup.noDataMessage || 'No data available') + '</div>';
     }
 
-    var width = Math.max(360, items.length * 42);
+    var width = Math.max(800, items.length * 42);
     var height = 160;
     var chartTop = 10;
     var chartBottom = 122;
     var chartHeight = chartBottom - chartTop;
     var left = 18;
     var innerWidth = width - left * 2;
-    var barWidth = Math.max(8, Math.floor(innerWidth / (items.length * 1.5)));
+    var barWidth = Math.max(8, Math.min(48, Math.floor(innerWidth / (items.length * 1.5))));
     var step = innerWidth / items.length;
 
     var maxValue = 0;
@@ -1325,7 +1393,8 @@ export class UsageWebviewProvider {
         detailButton.setAttribute('data-role', 'detail-button');
         detailButton.setAttribute('data-kind', period === 'month' ? 'hourly' : 'daily');
         detailButton.setAttribute('data-key', point.date || '');
-        detailButton.textContent = 'v';
+        detailButton.setAttribute('aria-label', popup.toggleDetails || 'Toggle details');
+        detailButton.appendChild(createChevronSvg());
 
         detailCell.appendChild(detailButton);
         row.appendChild(detailCell);
@@ -1566,16 +1635,16 @@ export class UsageWebviewProvider {
   }
 
   function tableLabelForDrilldownKey(key, monthLabel) {
-    var date = new Date(key);
-    if (isNaN(date.getTime())) {
+    var parsed = parseDateKey(key);
+    if (!parsed) {
       return String(key);
     }
 
     if (monthLabel) {
-      return String(date.getFullYear()) + '/' + String(date.getMonth() + 1).padStart(2, '0');
+      return parsed.year + '/' + parsed.month;
     }
 
-    return date.toLocaleDateString();
+    return parsed.year + '-' + parsed.month + '-' + parsed.day;
   }
 
   function renderDrilldownChart(drilldownKey, metric) {
@@ -1627,7 +1696,9 @@ export class UsageWebviewProvider {
 
   function handleClick(event) {
     var target = event.target;
-    if (!(target instanceof HTMLElement)) {
+    // SVG 子节点（chevron polyline、chart-bar rect）不是 HTMLElement 但是 Element，
+    // 用 Element 才能让它们的 closest() 正常冒泡到外层按钮。
+    if (!(target instanceof Element)) {
       return;
     }
 

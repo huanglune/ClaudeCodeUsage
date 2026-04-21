@@ -3,12 +3,13 @@ import { readFile } from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { ClaudeUsageRecord, CodexUsageEventUsage, CodexUsageRecord, ExtensionConfig } from './types';
+import { CacheProvider, UsageCache } from './usageCache';
+import { MergedBuckets, computePerFileBuckets, mergeBuckets } from './dataLoader';
 
 const CODEX_HOME_ENV = 'CODEX_HOME';
 const DEFAULT_CODEX_HOME = path.join(os.homedir(), '.codex');
 const CODEX_SESSIONS_DIR = 'sessions';
 const CODEX_ARCHIVED_SESSIONS_DIR = 'archived_sessions';
-const CACHE_TTL_MS = 60_000;
 
 export interface CodexParseState {
   currentModel: string | null;
@@ -129,22 +130,6 @@ function saturatingSub(value: number, previous: number): number {
 }
 
 export class CodexDataLoader {
-  private static cache: {
-    key: string | null;
-    records: ClaudeUsageRecord[];
-    lastUpdate: number;
-  } = {
-    key: null,
-    records: [],
-    lastUpdate: 0,
-  };
-
-  static invalidateCache(): void {
-    this.cache.key = null;
-    this.cache.records = [];
-    this.cache.lastUpdate = 0;
-  }
-
   static getCodexPaths(dataDirectory?: string): string[] {
     if (dataDirectory && dataDirectory.trim().length > 0) {
       return [path.resolve(dataDirectory)];
@@ -197,33 +182,78 @@ export class CodexDataLoader {
     };
   }
 
-  static async loadRecords(config: ExtensionConfig, forceReload = false): Promise<ClaudeUsageRecord[]> {
+  /**
+   * L2 cache-aware 加载：stat 每文件，未变的用缓存 bucket，变了的才 parse + 计算。
+   * 返回 merged buckets 供 extension 物化视图/drilldown 使用。
+   */
+  static async loadBucketsWithCache(
+    config: ExtensionConfig,
+    cache: UsageCache,
+    timeZone: string,
+  ): Promise<{ merged: MergedBuckets; stats: { fileCount: number; missCount: number; hitCount: number } }> {
+    const provider: CacheProvider = 'codex';
     if (!config.codexEnabled) {
-      return [];
+      cache.pruneMissing(provider, new Set());
+      return { merged: { daily: {}, hourly: {} }, stats: { fileCount: 0, missCount: 0, hitCount: 0 } };
     }
 
     const [basePath] = this.getCodexPaths(config.codexDataDirectory);
-    const cacheKey = `${basePath}|${config.codexIncludeArchived}`;
-    const freshEnough = Date.now() - this.cache.lastUpdate <= CACHE_TTL_MS;
-    if (!forceReload && freshEnough && this.cache.key === cacheKey) {
-      return this.cache.records;
-    }
-
     if (!fs.existsSync(basePath) || !fs.statSync(basePath).isDirectory()) {
-      this.cache = { key: cacheKey, records: [], lastUpdate: Date.now() };
-      return [];
+      cache.pruneMissing(provider, new Set());
+      return { merged: { daily: {}, hourly: {} }, stats: { fileCount: 0, missCount: 0, hitCount: 0 } };
     }
 
     const files = await this.findCodexJsonlFiles(basePath, config.codexIncludeArchived);
-    const merged: ClaudeUsageRecord[] = [];
-    for (const filePath of files) {
-      const records = await this.parseCodexFile(filePath);
-      merged.push(...records);
+    const presentSet = new Set(files);
+    cache.pruneMissing(provider, presentSet);
+
+    const stats = { fileCount: files.length, missCount: 0, hitCount: 0 };
+
+    const missFiles: Array<{ file: string; mtimeMs: number; size: number }> = [];
+    await Promise.all(
+      files.map(async (file) => {
+        try {
+          const st = await fs.promises.stat(file);
+          const existing = cache.getEntry(provider, file);
+          if (existing && existing.mtimeMs === st.mtimeMs && existing.size === st.size) {
+            stats.hitCount += 1;
+            return;
+          }
+          missFiles.push({ file, mtimeMs: st.mtimeMs, size: st.size });
+        } catch {
+          /* stat 失败：跳过 */
+        }
+      }),
+    );
+    stats.missCount = missFiles.length;
+
+    const CONCURRENCY = 16;
+    for (let i = 0; i < missFiles.length; i += CONCURRENCY) {
+      const batch = missFiles.slice(i, i + CONCURRENCY);
+      await Promise.all(
+        batch.map(async ({ file, mtimeMs, size }) => {
+          try {
+            const records = await this.parseCodexFile(file);
+            const buckets = computePerFileBuckets(records, timeZone);
+            cache.setEntry(provider, file, {
+              mtimeMs,
+              size,
+              daily: buckets.daily,
+              hourly: buckets.hourly,
+            });
+          } catch {
+            cache.setEntry(provider, file, { mtimeMs, size, daily: {}, hourly: {} });
+          }
+        }),
+      );
     }
 
-    merged.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-    this.cache = { key: cacheKey, records: merged, lastUpdate: Date.now() };
-    return merged;
+    const merged: MergedBuckets = { daily: {}, hourly: {} };
+    for (const [, entry] of cache.entries(provider)) {
+      mergeBuckets(merged, entry);
+    }
+
+    return { merged, stats };
   }
 
   static async parseCodexFile(filePath: string): Promise<ClaudeUsageRecord[]> {

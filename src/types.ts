@@ -172,6 +172,7 @@ export interface ExtensionConfig {
   codexDataDirectory: string;
   language: string;
   decimalPlaces: number;
+  timezone: string;
 }
 
 export interface ModelPricing {
