@@ -1,15 +1,28 @@
 const AUTO_TIMEZONE = 'auto';
 
+// VSCode settings.json 是自由 JSON，package.json 的 enum 只是 UI 提示。
+// 用户手写无效的 IANA ID 时，formatTzDateHour 里 Intl.DateTimeFormat 会抛
+// RangeError 把整个刷新循环打挂。这里统一做一次运行时校验，失败退回 UTC。
+function isValidTimeZone(timeZone: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function resolveTimeZone(setting: string | undefined): string {
   const raw = (setting || '').trim();
   if (raw === '' || raw === AUTO_TIMEZONE) {
     try {
-      return Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+      const system = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      return system && isValidTimeZone(system) ? system : 'UTC';
     } catch {
       return 'UTC';
     }
   }
-  return raw;
+  return isValidTimeZone(raw) ? raw : 'UTC';
 }
 
 export function formatTzDateHour(instant: Date, timeZone: string): { date: string; hour: string } {

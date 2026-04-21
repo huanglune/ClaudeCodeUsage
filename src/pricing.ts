@@ -15,6 +15,7 @@
 // only exercise getModelPricing / calculateCostFromPricing) can load this
 // module in plain Node without the vscode host being present.
 
+import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import * as fs from 'node:fs/promises';
 import type { ModelPricing, PricingSnapshot } from './types';
@@ -53,17 +54,34 @@ export function _setPricingForTests(value: Record<string, ModelPricing>): void {
 }
 
 // 用于 usage 缓存的失效判定：pricing 改变后已缓存的 cost 数字都要作废。
-// 取 key 数量 + 前几个 key 的核心价格即可，足够 detect 快照级变更。
+// 全量哈希所有参与 calculateCostFromPricing 的字段：base rate + 200k 分档 +
+// cache creation / cache read + reasoning 用的 output rate。~200 个 model、
+// 每次 ensureCache 只算一次，开销可忽略；换回采样指纹会漏掉尾部 key 变更。
+const PRICING_FIELDS: readonly (keyof ModelPricing)[] = [
+  'input_cost_per_token',
+  'input_cost_per_token_above_200k_tokens',
+  'output_cost_per_token',
+  'output_cost_per_token_above_200k_tokens',
+  'cache_creation_input_token_cost',
+  'cache_creation_input_token_cost_above_200k_tokens',
+  'cache_read_input_token_cost',
+  'cache_read_input_token_cost_above_200k_tokens',
+];
+
 export function getPricingFingerprint(): string {
   const keys = Object.keys(pricing).sort();
-  const sample = keys
-    .slice(0, 5)
-    .map((k) => {
-      const p = pricing[k];
-      return `${k}:${p.input_cost_per_token ?? 0}:${p.output_cost_per_token ?? 0}`;
-    })
-    .join('|');
-  return `${keys.length}|${sample}`;
+  const hash = createHash('sha1');
+  for (const k of keys) {
+    const p = pricing[k];
+    hash.update(k);
+    for (const field of PRICING_FIELDS) {
+      hash.update('|');
+      const value = p[field];
+      hash.update(value == null ? '' : String(value));
+    }
+    hash.update('\n');
+  }
+  return `${keys.length}:${hash.digest('hex').slice(0, 16)}`;
 }
 
 // Minimal structural type for the slice of ExtensionContext we touch.
