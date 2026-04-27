@@ -1,9 +1,9 @@
 {
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "fetched_at": "2026-04-20T19:50:04.676Z",
-    "source_commit": "26fcbc93",
-    "model_count": 151
+    "fetched_at": "2026-04-27T07:09:43.558Z",
+    "source_commit": "3d2b8fed",
+    "model_count": 158
   },
   "models": {
     "anthropic.claude-3-5-haiku-20241022-v1:0": {
@@ -99,6 +99,12 @@
       "output_cost_per_token": 0.0000024,
       "max_input_tokens": 100000,
       "max_output_tokens": 8191
+    },
+    "anthropic.claude-mythos-preview": {
+      "input_cost_per_token": 0,
+      "output_cost_per_token": 0,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
     },
     "anthropic.claude-opus-4-1-20250805-v1:0": {
       "input_cost_per_token": 0.000015,
@@ -880,7 +886,21 @@
       "max_input_tokens": 272000,
       "max_output_tokens": 128000
     },
+    "gpt-5.4-mini-2026-03-17": {
+      "input_cost_per_token": 7.5e-7,
+      "output_cost_per_token": 0.0000045,
+      "cache_read_input_token_cost": 7.5e-8,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000
+    },
     "gpt-5.4-nano": {
+      "input_cost_per_token": 2e-7,
+      "output_cost_per_token": 0.00000125,
+      "cache_read_input_token_cost": 2e-8,
+      "max_input_tokens": 272000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.4-nano-2026-03-17": {
       "input_cost_per_token": 2e-7,
       "output_cost_per_token": 0.00000125,
       "cache_read_input_token_cost": 2e-8,
@@ -898,6 +918,34 @@
       "input_cost_per_token": 0.00003,
       "output_cost_per_token": 0.00018,
       "cache_read_input_token_cost": 0.000003,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.5": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.00003,
+      "cache_read_input_token_cost": 5e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.5-2026-04-23": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.00003,
+      "cache_read_input_token_cost": 5e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.5-pro": {
+      "input_cost_per_token": 0.00006,
+      "output_cost_per_token": 0.00036,
+      "cache_read_input_token_cost": 0.000006,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.5-pro-2026-04-23": {
+      "input_cost_per_token": 0.00006,
+      "output_cost_per_token": 0.00036,
+      "cache_read_input_token_cost": 0.000006,
       "max_input_tokens": 1050000,
       "max_output_tokens": 128000
     },
