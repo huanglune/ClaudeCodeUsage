@@ -5,16 +5,22 @@ on:
     - cron: '0 3 * * 1'   # Mondays 03:00 UTC
   workflow_dispatch:
 
-permissions:
-  contents: write
-
 jobs:
   sync:
     runs-on: ubuntu-latest
     steps:
+      - name: Generate token
+        id: generate_token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.APP_ID }}
+          private-key: ${{ secrets.APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+
       - uses: actions/checkout@v4
         with:
-          token: ${{ secrets.GITHUB_TOKEN }}
+          token: ${{ steps.generate_token.outputs.token }}
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
@@ -31,6 +37,9 @@ jobs:
           SRC_SHA=$(node -e "console.log(require('./src/pricing-data.json')._meta.source_commit)")
           git config user.name  "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git remote set-url origin https://x-access-token:${{ steps.generate_token.outputs.token }}@github.com/${{ github.repository }}.git
+
           git add src/pricing-data.json
           git commit -m "chore(pricing): sync LiteLLM snapshot @ ${SRC_SHA}"
-          git push
+          git push origin HEAD:main
