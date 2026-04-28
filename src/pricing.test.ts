@@ -5,6 +5,7 @@ import {
   getModelPricing,
   calculateCostFromPricing,
   calculateCostFromTokens,
+  getPricingFingerprint,
   _setPricingForTests,
 } from './pricing';
 
@@ -168,4 +169,21 @@ test('calculateCostFromTokens last-resort sonnet for unknown-family model', () =
 test('unknown Claude name still falls back to latest sonnet', () => {
   const p = getModelPricing('claude-future-experimental-xyz');
   assert.deepEqual(p, sonnetPricing);
+});
+
+test('getPricingFingerprint is deterministic for the same table and matches expected format', () => {
+  const fp1 = getPricingFingerprint();
+  const fp2 = getPricingFingerprint();
+  assert.equal(fp1, fp2);
+  // 格式：`<keyCount>:<16-char hex>` —— UsageCache 用整段字符串 equality 比对，不解析子部分
+  assert.match(fp1, /^\d+:[0-9a-f]{16}$/);
+});
+
+test('getPricingFingerprint changes when pricing values change', () => {
+  const before = getPricingFingerprint();
+  _setPricingForTests({
+    'gpt-5': { input_cost_per_token: 999e-6, output_cost_per_token: 999e-6 },
+  });
+  const after = getPricingFingerprint();
+  assert.notEqual(before, after);
 });

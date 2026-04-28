@@ -68,9 +68,27 @@ const PRICING_FIELDS: readonly (keyof ModelPricing)[] = [
   'cache_read_input_token_cost_above_200k_tokens',
 ];
 
+// stripKnownSuffix 的剥离规则也参与 fingerprint：剥离表变化（例如新增 -spark）
+// 会让 getModelPricing 对同一 model id 的命中结果发生变化，已缓存的 cost 必须作废。
+const STRIP_SUFFIXES = [
+  '-codex-max-xhigh',
+  '-codex',
+  '-spark',
+  '-high',
+  '-low',
+  '-thinking',
+] as const;
+
 export function getPricingFingerprint(): string {
   const keys = Object.keys(pricing).sort();
   const hash = createHash('sha1');
+  // 剥离规则先入 hash：suffixes 列表变化 → fingerprint 变化 → cache 失效
+  hash.update('suffixes:');
+  for (const suffix of STRIP_SUFFIXES) {
+    hash.update(suffix);
+    hash.update('|');
+  }
+  hash.update('\n');
   for (const k of keys) {
     const p = pricing[k];
     hash.update(k);
@@ -204,8 +222,7 @@ export function getModelPricing(modelName: string | undefined): ModelPricing | n
 }
 
 function stripKnownSuffix(model: string): string {
-  const suffixes = ['-codex-max-xhigh', '-codex', '-spark', '-high', '-low', '-thinking'] as const;
-  for (const suffix of suffixes) {
+  for (const suffix of STRIP_SUFFIXES) {
     if (model.endsWith(suffix) && model.length > suffix.length) {
       return model.slice(0, -suffix.length);
     }
