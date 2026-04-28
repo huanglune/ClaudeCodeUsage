@@ -73,6 +73,17 @@ test('getModelPricing strips layered suffix first (-codex-max-xhigh)', () => {
   assert.deepEqual(p, gpt5Pricing);
 });
 
+test('getModelPricing strips -spark to fall back to base codex pricing', () => {
+  // codex client resolves user's `/model gpt-5.3-spark` into the literal
+  // `gpt-5.3-codex-spark` written to turn_context.model. LiteLLM has no
+  // `-spark` SKU, so we treat it as an alias of the base codex price.
+  _setPricingForTests({
+    'gpt-5.3-codex': gpt5Pricing,
+    'gpt-5.4-20260201': gpt54Pricing,
+  });
+  assert.deepEqual(getModelPricing('gpt-5.3-codex-spark'), gpt5Pricing);
+});
+
 test('getModelPricing family-fallback for future gpt-5 variant', () => {
   const p = getModelPricing('gpt-5.7-preview');
   assert.deepEqual(p, gpt54Pricing);
