@@ -204,7 +204,7 @@ export function getModelPricing(modelName: string | undefined): ModelPricing | n
 }
 
 function stripKnownSuffix(model: string): string {
-  const suffixes = ['-codex-max-xhigh', '-codex', '-high', '-low', '-thinking'] as const;
+  const suffixes = ['-codex-max-xhigh', '-codex', '-spark', '-high', '-low', '-thinking'] as const;
   for (const suffix of suffixes) {
     if (model.endsWith(suffix) && model.length > suffix.length) {
       return model.slice(0, -suffix.length);
