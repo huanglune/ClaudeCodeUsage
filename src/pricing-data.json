@@ -1,9 +1,9 @@
 {
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "fetched_at": "2026-05-04T06:18:07.464Z",
-    "source_commit": "934ecdca",
-    "model_count": 160
+    "fetched_at": "2026-05-18T07:01:21.805Z",
+    "source_commit": "a72414a0",
+    "model_count": 161
   },
   "models": {
     "anthropic.claude-3-5-haiku-20241022-v1:0": {
@@ -1021,6 +1021,13 @@
       "max_output_tokens": 4096
     },
     "gpt-realtime-1.5": {
+      "input_cost_per_token": 0.000004,
+      "output_cost_per_token": 0.000016,
+      "cache_read_input_token_cost": 4e-7,
+      "max_input_tokens": 32000,
+      "max_output_tokens": 4096
+    },
+    "gpt-realtime-2": {
       "input_cost_per_token": 0.000004,
       "output_cost_per_token": 0.000016,
       "cache_read_input_token_cost": 4e-7,
