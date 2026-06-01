@@ -1,9 +1,9 @@
 {
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "fetched_at": "2026-05-18T07:01:21.805Z",
-    "source_commit": "a72414a0",
-    "model_count": 161
+    "fetched_at": "2026-06-01T08:40:07.265Z",
+    "source_commit": "5be0797d",
+    "model_count": 163
   },
   "models": {
     "anthropic.claude-3-5-haiku-20241022-v1:0": {
@@ -139,6 +139,14 @@
       "max_output_tokens": 128000
     },
     "anthropic.claude-opus-4-7": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.000025,
+      "cache_creation_input_token_cost": 0.00000625,
+      "cache_read_input_token_cost": 5e-7,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
+    },
+    "anthropic.claude-opus-4-8": {
       "input_cost_per_token": 0.000005,
       "output_cost_per_token": 0.000025,
       "cache_creation_input_token_cost": 0.00000625,
@@ -315,6 +323,14 @@
       "max_output_tokens": 128000
     },
     "claude-opus-4-7-20260416": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.000025,
+      "cache_creation_input_token_cost": 0.00000625,
+      "cache_read_input_token_cost": 5e-7,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
+    },
+    "claude-opus-4-8": {
       "input_cost_per_token": 0.000005,
       "output_cost_per_token": 0.000025,
       "cache_creation_input_token_cost": 0.00000625,
