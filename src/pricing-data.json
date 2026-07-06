@@ -1,9 +1,9 @@
 {
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "fetched_at": "2026-06-29T08:20:06.486Z",
-    "source_commit": "0ade44f4",
-    "model_count": 165
+    "fetched_at": "2026-07-06T07:18:16.483Z",
+    "source_commit": "79a6b8f7",
+    "model_count": 167
   },
   "models": {
     "anthropic.claude-3-5-haiku-20241022-v1:0": {
@@ -193,6 +193,14 @@
       "cache_read_input_token_cost": 3e-7,
       "max_input_tokens": 1000000,
       "max_output_tokens": 64000
+    },
+    "anthropic.claude-sonnet-5": {
+      "input_cost_per_token": 0.000002,
+      "output_cost_per_token": 0.00001,
+      "cache_creation_input_token_cost": 0.0000025,
+      "cache_read_input_token_cost": 2e-7,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
     },
     "anthropic.claude-v1": {
       "input_cost_per_token": 0.000008,
@@ -409,6 +417,14 @@
       "cache_read_input_token_cost": 3e-7,
       "max_input_tokens": 1000000,
       "max_output_tokens": 64000
+    },
+    "claude-sonnet-5": {
+      "input_cost_per_token": 0.000002,
+      "output_cost_per_token": 0.00001,
+      "cache_creation_input_token_cost": 0.0000025,
+      "cache_read_input_token_cost": 2e-7,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
     },
     "gpt-3.5-turbo": {
       "input_cost_per_token": 5e-7,
