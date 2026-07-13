@@ -1,9 +1,9 @@
 {
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "fetched_at": "2026-07-06T07:18:16.483Z",
-    "source_commit": "79a6b8f7",
-    "model_count": 167
+    "fetched_at": "2026-07-13T06:24:55.210Z",
+    "source_commit": "10d5804b",
+    "model_count": 173
   },
   "models": {
     "anthropic.claude-3-5-haiku-20241022-v1:0": {
@@ -997,6 +997,38 @@
       "max_input_tokens": 1050000,
       "max_output_tokens": 128000
     },
+    "gpt-5.6": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.00003,
+      "cache_creation_input_token_cost": 0.00000625,
+      "cache_read_input_token_cost": 5e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.6-luna": {
+      "input_cost_per_token": 0.000001,
+      "output_cost_per_token": 0.000006,
+      "cache_creation_input_token_cost": 0.00000125,
+      "cache_read_input_token_cost": 1e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.6-sol": {
+      "input_cost_per_token": 0.000005,
+      "output_cost_per_token": 0.00003,
+      "cache_creation_input_token_cost": 0.00000625,
+      "cache_read_input_token_cost": 5e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-5.6-terra": {
+      "input_cost_per_token": 0.0000025,
+      "output_cost_per_token": 0.000015,
+      "cache_creation_input_token_cost": 0.000003125,
+      "cache_read_input_token_cost": 2.5e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
     "gpt-audio": {
       "input_cost_per_token": 0.0000025,
       "output_cost_per_token": 0.00001,
@@ -1080,6 +1112,20 @@
       "output_cost_per_token": 0.000016,
       "cache_read_input_token_cost": 4e-7,
       "max_input_tokens": 32000,
+      "max_output_tokens": 4096
+    },
+    "gpt-realtime-2.1": {
+      "input_cost_per_token": 0.000004,
+      "output_cost_per_token": 0.000024,
+      "cache_read_input_token_cost": 4e-7,
+      "max_input_tokens": 128000,
+      "max_output_tokens": 32000
+    },
+    "gpt-realtime-2.1-mini": {
+      "input_cost_per_token": 6e-7,
+      "output_cost_per_token": 0.0000024,
+      "cache_read_input_token_cost": 6e-8,
+      "max_input_tokens": 128000,
       "max_output_tokens": 4096
     },
     "gpt-realtime-2025-08-28": {
