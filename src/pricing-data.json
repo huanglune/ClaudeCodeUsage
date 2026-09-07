@@ -1,9 +1,9 @@
 {
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json",
-    "fetched_at": "2026-08-24T03:58:33.627Z",
-    "source_commit": "947dbbf0",
-    "model_count": 178
+    "fetched_at": "2026-09-07T08:07:39.404Z",
+    "source_commit": "eeb7732f",
+    "model_count": 184
   },
   "models": {
     "anthropic.claude-3-5-haiku-20241022-v1:0": {
@@ -83,6 +83,14 @@
       "output_cost_per_token": 0.00005,
       "cache_creation_input_token_cost": 0.0000125,
       "cache_read_input_token_cost": 0.000001,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
+    },
+    "anthropic.claude-fable-5-1": {
+      "input_cost_per_token": 0.00001,
+      "output_cost_per_token": 0.00005,
+      "cache_creation_input_token_cost": 0.0000125,
+      "cache_read_input_token_cost": 2.5e-7,
       "max_input_tokens": 1000000,
       "max_output_tokens": 128000
     },
@@ -274,6 +282,14 @@
       "max_input_tokens": 1000000,
       "max_output_tokens": 128000
     },
+    "claude-fable-5-1": {
+      "input_cost_per_token": 0.00001,
+      "output_cost_per_token": 0.00005,
+      "cache_creation_input_token_cost": 0.0000125,
+      "cache_read_input_token_cost": 2.5e-7,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
+    },
     "claude-haiku-4-5": {
       "input_cost_per_token": 0.000001,
       "output_cost_per_token": 0.000005,
@@ -295,6 +311,14 @@
       "output_cost_per_token": 0.00005,
       "cache_creation_input_token_cost": 0.0000125,
       "cache_read_input_token_cost": 0.000001,
+      "max_input_tokens": 1000000,
+      "max_output_tokens": 128000
+    },
+    "claude-mythos-5-1": {
+      "input_cost_per_token": 0.00001,
+      "output_cost_per_token": 0.00005,
+      "cache_creation_input_token_cost": 0.0000125,
+      "cache_read_input_token_cost": 2.5e-7,
       "max_input_tokens": 1000000,
       "max_output_tokens": 128000
     },
@@ -1069,6 +1093,14 @@
       "max_input_tokens": 922000,
       "max_output_tokens": 128000
     },
+    "gpt-6-astra": {
+      "input_cost_per_token": 0.00001,
+      "output_cost_per_token": 0.00005,
+      "cache_creation_input_token_cost": 0.0000125,
+      "cache_read_input_token_cost": 0.000001,
+      "max_input_tokens": 922000,
+      "max_output_tokens": 128000
+    },
     "gpt-audio": {
       "input_cost_per_token": 0.0000025,
       "output_cost_per_token": 0.00001,
@@ -1105,6 +1137,22 @@
       "max_input_tokens": 128000,
       "max_output_tokens": 16384
     },
+    "gpt-daybreak-blue-latest": {
+      "input_cost_per_token": 0.000004,
+      "output_cost_per_token": 0.00002,
+      "cache_creation_input_token_cost": 0.000005,
+      "cache_read_input_token_cost": 4e-7,
+      "max_input_tokens": 1050000,
+      "max_output_tokens": 128000
+    },
+    "gpt-daybreak-red-latest": {
+      "input_cost_per_token": 0.0000125,
+      "output_cost_per_token": 0.000075,
+      "cache_creation_input_token_cost": 0.000015625,
+      "cache_read_input_token_cost": 0.00000125,
+      "max_input_tokens": 400000,
+      "max_output_tokens": 128000
+    },
     "gpt-image-1": {
       "input_cost_per_token": 0.000005,
       "cache_read_input_token_cost": 0.00000125
@@ -1125,12 +1173,10 @@
     },
     "gpt-image-2": {
       "input_cost_per_token": 0.000005,
-      "output_cost_per_token": 0.00001,
       "cache_read_input_token_cost": 0.00000125
     },
     "gpt-image-2-2026-04-21": {
       "input_cost_per_token": 0.000005,
-      "output_cost_per_token": 0.00001,
       "cache_read_input_token_cost": 0.00000125
     },
     "gpt-realtime": {
@@ -1149,10 +1195,10 @@
     },
     "gpt-realtime-2": {
       "input_cost_per_token": 0.000004,
-      "output_cost_per_token": 0.000016,
+      "output_cost_per_token": 0.000024,
       "cache_read_input_token_cost": 4e-7,
-      "max_input_tokens": 32000,
-      "max_output_tokens": 4096
+      "max_input_tokens": 128000,
+      "max_output_tokens": 32000
     },
     "gpt-realtime-2.1": {
       "input_cost_per_token": 0.000004,
@@ -1166,7 +1212,7 @@
       "output_cost_per_token": 0.0000024,
       "cache_read_input_token_cost": 6e-8,
       "max_input_tokens": 128000,
-      "max_output_tokens": 4096
+      "max_output_tokens": 32000
     },
     "gpt-realtime-2025-08-28": {
       "input_cost_per_token": 0.000004,
@@ -1178,7 +1224,7 @@
     "gpt-realtime-mini": {
       "input_cost_per_token": 6e-7,
       "output_cost_per_token": 0.0000024,
-      "max_input_tokens": 128000,
+      "max_input_tokens": 32000,
       "max_output_tokens": 4096
     },
     "gpt-realtime-mini-2025-10-06": {
